@@ -381,24 +381,13 @@ int main(void)
 
   //JumpToBootloader();
   Radio.Rx(RX_TIMEOUT_VALUE);
-  char txt[100];           // Debug buffer
-  int counter_byte_tx = 0; // Debug MSG SENT
-  int counter_byte_rx = 0; // Debug MSG RECEIVED
-  int dd_index = 0;        // DATA index
-  int aaaa_index = 0;      // ADDRESS index
-  int update_flag = 0      // 0 = NO UPDATE | 1 = UPDATE RUNNING
-
-      // ERASE operation. ADDRESSES must be set accordingly to the memory to write
-      if (isMaster == false & update_flag == 1)
-  {
-    for (size_t i = 0; i < 256; i++)
-    {
-      FLASH_PageErase(i, FLASH_BANK_1); // Erasing all the needed space
-      int status;
-      status = FLASH_WaitForLastOperation(1000); // Wait until the operation ends
-    }
-    update_flag++;
-  }
+  char txt[100];                // Debug buffer
+  uint32_t counter_byte_tx = 0; // Debug MSG SENT
+  uint32_t counter_byte_rx = 0; // Debug MSG RECEIVED
+  uint16_t dd_index = 0;        // DATA index
+  uint16_t aaaa_index = 0;      // ADDRESS index
+  uint8_t update_flag = 0;      // 0 = NO UPDATE | 1 = UPDATE RUNNING
+  uint8_t retry_flag = 0;
 
   while (1)
   {
@@ -414,25 +403,29 @@ int main(void)
       {
         if (BufferSize > 0)
         {
+          // Give update configuration to the slave
+          Buffer[0] = 0xAA;      // Update request
+          Radio.Send(Buffer, 1); // Send update request
+
           TimerStop(&timerLed);
           LED_Off(LED_BLUE);
           LED_Off(LED_GREEN);
           LED_Off(LED_RED1);
           LED_Toggle(LED_RED2);
 
-          Buffer[0] = KEY;                       // KEY value. Could be changed with a function
+          Buffer[0] = KEY;                       // KEY value
           Buffer[1] = arr_aaaa[aaaa_index] >> 8; // ADDRESS MSByte
           Buffer[2] = arr_aaaa[aaaa_index];      // ADDRESS LSByte
           aaaa_index++;                          // Preparing for next address
           sprintf(txt, "DATA_AAAA: %02x%02x\r\n", Buffer[0], Buffer[1]);
           HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 1000);
 
-          int index = 3;
-          int tmp_index = dd_index;
+          uint8_t index = 3;
+          uint16_t tmp_index = dd_index;
           // Preparing the buffer DATA to send with two DATA for each LoRa message
           for (size_t k = tmp_index; k < tmp_index + 2; k++)
           {
-            int to_parse = arr_dd[k]; // Using the data to store
+            uint16_t to_parse = arr_dd[k]; // Using the data to store
             for (size_t i = 0; i < 4; i++)
             {
               Buffer[index] = (to_parse >> ((3 - i) * 8)) & 0xFF; // Storing in buffer to send all bytes
@@ -442,7 +435,7 @@ int main(void)
           }
           DelayMs(25);
           // Debug BUFFER to send
-          for (int i = 0; i < sizeof(Buffer); i++)
+          for (size_t i = 0; i < sizeof(Buffer); i++)
           {
             sprintf(txt, "DATA[%d]: %02x\r\n", i, Buffer[i]);
             HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 1000);
@@ -462,6 +455,8 @@ int main(void)
           // If is the last message to send then STOP
           if (counter_byte_tx * BUFFER_SIZE > (sizeof(arr_dd) / sizeof(arr_dd[0])))
           {
+            Buffer[0] = 0xFF;      // End of update
+            Radio.Send(Buffer, 1); // Send end of update
             return 0;
           }
         }
@@ -470,7 +465,25 @@ int main(void)
       {
         if (BufferSize > 0)
         {
-          if (Buffer[0] == KEY) // Check for intgrity
+          if (Buffer[0] == 0xAA) // Init of update
+          {
+            update_flag++;
+            // ERASE operation. ADDRESSES must be set accordingly to the memory to write
+            if (isMaster == false & update_flag == 1)
+            {
+              for (size_t i = 0; i < 256; i++)
+              {
+                FLASH_PageErase(i, FLASH_BANK_1); // Erasing all the needed space
+                uint8_t status;
+                status = FLASH_WaitForLastOperation(1000); // Wait until the operation ends
+              }
+            }
+          }
+          else if (Buffer[0] = 0xFF) // End of update
+          {
+            test_jump(); // Jump to the application address
+          }
+          else if (Buffer[0] == KEY) // Check for intgrity
           {
             TimerStop(&timerLed);
             LED_Off(LED_RED1);
@@ -487,7 +500,7 @@ int main(void)
               buff_to_store[i] = Buffer[i];
             }
             // Debug received message
-            for (int i = 0; i < sizeof(buff_to_store); i++)
+            for (size_t i = 0; i < sizeof(buff_to_store); i++)
             {
               sprintf(txt, "DATA[%d]: %02x\r\n", i, buff_to_store[i]);
               HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 1000);
@@ -500,7 +513,7 @@ int main(void)
             uint32_t aaaa = APPLICATION_ADDRESS + (Buffer[1] << 8) + Buffer[2]; // Setting ADDRESS
             uint64_t dd = 0x00;                                                 // Cleaning data bytes
             // Storing DATA to write in DD
-            for (int i = 10; i >= 3; i--)
+            for (size_t i = 10; i >= 3; i--)
             {
               dd = (dd << 8) + Buffer[i];
             }
@@ -513,11 +526,22 @@ int main(void)
                     counter_byte_rx, counter_byte_rx * BUFFER_SIZE,
                     BUFFER_SIZE, LORA_SPREADING_FACTOR, TX_OUTPUT_POWER, LORA_BANDWIDTH, RF_FREQUENCY);
             HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 200);
+            if (counter_byte_rx >= sizeof(arr_dd) / sizeof(arr_dd[0]))
+            {
+            }
           }
           else // valid reception but not a PING as expected
           {
             isMaster = true;
             Radio.Rx(RX_TIMEOUT_VALUE);
+          }
+        }
+        else
+        {
+          retry_flag++;
+          if (retry_flag == 20) // If after waiting 20 message of update there is not an update request then jump
+          {
+            test_jump();
           }
         }
       }
