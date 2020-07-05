@@ -1,0 +1,2302 @@
+ARM GAS  /tmp/ccMvkkdN.s 			page 1
+
+
+   1              		.cpu cortex-m4
+   2              		.eabi_attribute 27, 1
+   3              		.eabi_attribute 28, 1
+   4              		.eabi_attribute 20, 1
+   5              		.eabi_attribute 21, 1
+   6              		.eabi_attribute 23, 3
+   7              		.eabi_attribute 24, 1
+   8              		.eabi_attribute 25, 1
+   9              		.eabi_attribute 26, 1
+  10              		.eabi_attribute 30, 1
+  11              		.eabi_attribute 34, 1
+  12              		.eabi_attribute 18, 4
+  13              		.file	"bootloader.c"
+  14              		.text
+  15              	.Ltext0:
+  16              		.cfi_sections	.debug_frame
+  17              		.section	.text.xor_checksum,"ax",%progbits
+  18              		.align	1
+  19              		.arch armv7e-m
+  20              		.syntax unified
+  21              		.thumb
+  22              		.thumb_func
+  23              		.fpu fpv4-sp-d16
+  25              	xor_checksum:
+  26              	.LVL0:
+  27              	.LFB143:
+  28              		.file 1 "Src/bootloader.c"
+   1:Src/bootloader.c **** #include "bootloader.h"
+   2:Src/bootloader.c **** #include <string.h>
+   3:Src/bootloader.c **** 
+   4:Src/bootloader.c **** SPI_HandleTypeDef *SpiHandle;
+   5:Src/bootloader.c **** 
+   6:Src/bootloader.c **** static void wait_for_ack(void);
+   7:Src/bootloader.c **** static uint8_t xor_checksum(const uint8_t pData[], uint8_t len);
+   8:Src/bootloader.c **** 
+   9:Src/bootloader.c **** /**
+  10:Src/bootloader.c ****   * @brief  Initialize the SPI Bootloader host with the associated SPI handle
+  11:Src/bootloader.c ****   *         and synchronize with target.
+  12:Src/bootloader.c ****   * @param  hspi: pointer to a SPI_HandleTypeDef structure that contains
+  13:Src/bootloader.c ****   *               the configuration information for SPI module.
+  14:Src/bootloader.c ****   * @retval None
+  15:Src/bootloader.c ****   */
+  16:Src/bootloader.c **** void BL_Init(SPI_HandleTypeDef *hspi)
+  17:Src/bootloader.c **** {
+  18:Src/bootloader.c ****   uint8_t sync_byte = BL_SPI_SOF;
+  19:Src/bootloader.c **** 
+  20:Src/bootloader.c ****   /* Associate SPI handle */
+  21:Src/bootloader.c ****   SpiHandle = hspi;
+  22:Src/bootloader.c **** 
+  23:Src/bootloader.c ****   /* Send synchronization Byte */
+  24:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &sync_byte, 1U, 1000U);
+  25:Src/bootloader.c **** 
+  26:Src/bootloader.c ****   /* Get SYNC Byte ACK*/
+  27:Src/bootloader.c ****   wait_for_ack();
+  28:Src/bootloader.c **** }
+  29:Src/bootloader.c **** 
+  30:Src/bootloader.c **** /**
+ARM GAS  /tmp/ccMvkkdN.s 			page 2
+
+
+  31:Src/bootloader.c ****   * @brief  Get bootloader version and supported commands
+  32:Src/bootloader.c ****   * @param  pData: pointer to destination data buffer
+  33:Src/bootloader.c ****   * @retval None
+  34:Src/bootloader.c ****   */
+  35:Src/bootloader.c **** void BL_Get_Command(uint8_t *pData)
+  36:Src/bootloader.c **** {
+  37:Src/bootloader.c ****   uint8_t cmd_frame[3];
+  38:Src/bootloader.c ****   uint8_t rx_number_of_bytes;
+  39:Src/bootloader.c **** 
+  40:Src/bootloader.c ****   /* Send start of frame (0x5A) + GET command frame (0x00 0xFF) */
+  41:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+  42:Src/bootloader.c ****   cmd_frame[1] = GET_CMD_COMMAND;
+  43:Src/bootloader.c ****   cmd_frame[2] = GET_CMD_COMMAND ^ 0xFFU; /*!< Command XOR checksum */
+  44:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+  45:Src/bootloader.c **** 
+  46:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+  47:Src/bootloader.c ****   wait_for_ack();
+  48:Src/bootloader.c **** 
+  49:Src/bootloader.c ****   /* Receive data frame */
+  50:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, &rx_number_of_bytes, 1U, 1000U); /*!< Dummy read */
+  51:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, &rx_number_of_bytes, 1U, 1000U);
+  52:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, pData, (uint16_t)rx_number_of_bytes + 1U, 1000U);
+  53:Src/bootloader.c **** 
+  54:Src/bootloader.c ****   /* Send ACK */
+  55:Src/bootloader.c ****   cmd_frame[0] = 0x79U;
+  56:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 1U, 1000U);
+  57:Src/bootloader.c **** }
+  58:Src/bootloader.c **** 
+  59:Src/bootloader.c **** /**
+  60:Src/bootloader.c ****   * @brief  Get bootloader version
+  61:Src/bootloader.c ****   * @param  hspi: pointer to a SPI_HandleTypeDef structure that contains
+  62:Src/bootloader.c ****   *               the configuration information for SPI module.
+  63:Src/bootloader.c ****   * @retval bootloader version
+  64:Src/bootloader.c ****   */
+  65:Src/bootloader.c **** uint8_t BL_GetVersion_Command(void)
+  66:Src/bootloader.c **** {
+  67:Src/bootloader.c ****   uint8_t cmd_frame[3];
+  68:Src/bootloader.c ****   uint8_t version = 0x00U;
+  69:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+  70:Src/bootloader.c **** 
+  71:Src/bootloader.c ****   /* Send start of frame (0x5A) + Get Version command frame (0x01 0xEE) */
+  72:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+  73:Src/bootloader.c ****   cmd_frame[1] = GET_VER_COMMAND;
+  74:Src/bootloader.c ****   cmd_frame[2] = GET_VER_COMMAND ^ 0xFFU;
+  75:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+  76:Src/bootloader.c **** 
+  77:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+  78:Src/bootloader.c ****   wait_for_ack();
+  79:Src/bootloader.c **** 
+  80:Src/bootloader.c ****   /* Receive data frame */
+  81:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U); /*!< Send dummy */
+  82:Src/bootloader.c ****   HAL_SPI_TransmitReceive(SpiHandle, cmd_frame, &version, 1U, 1000U);
+  83:Src/bootloader.c **** 
+  84:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+  85:Src/bootloader.c ****   wait_for_ack();
+  86:Src/bootloader.c **** 
+  87:Src/bootloader.c ****   return version;
+ARM GAS  /tmp/ccMvkkdN.s 			page 3
+
+
+  88:Src/bootloader.c **** }
+  89:Src/bootloader.c **** 
+  90:Src/bootloader.c **** /**
+  91:Src/bootloader.c ****   * @brief  Get the version of the chip ID (identification)
+  92:Src/bootloader.c ****   * @param  None
+  93:Src/bootloader.c ****   * @retval chip ID
+  94:Src/bootloader.c ****   */
+  95:Src/bootloader.c **** uint16_t BL_GetID_Command(void)
+  96:Src/bootloader.c **** {
+  97:Src/bootloader.c ****   uint16_t id;
+  98:Src/bootloader.c ****   uint8_t cmd_frame[3];
+  99:Src/bootloader.c ****   uint8_t rx_number_of_bytes;
+ 100:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 101:Src/bootloader.c ****   uint8_t rx_buffer[2];
+ 102:Src/bootloader.c **** 
+ 103:Src/bootloader.c ****   /* Send start of frame (0x5A) + Get ID command frame (0x02 0xFD) */
+ 104:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 105:Src/bootloader.c ****   cmd_frame[1] = GET_ID_COMMAND;
+ 106:Src/bootloader.c ****   cmd_frame[2] = GET_ID_COMMAND ^ 0xFFU;
+ 107:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 108:Src/bootloader.c **** 
+ 109:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 110:Src/bootloader.c ****   wait_for_ack();
+ 111:Src/bootloader.c **** 
+ 112:Src/bootloader.c ****   /* Receive data frame */
+ 113:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U);
+ 114:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, &rx_number_of_bytes, 1U, 1000U);
+ 115:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, rx_buffer, (uint16_t)rx_number_of_bytes + 1U, 1000U);
+ 116:Src/bootloader.c ****   /* received Byte #0 is ID MSB and received Byte #1 is ID LSB */
+ 117:Src/bootloader.c ****   id = ((uint16_t)rx_buffer[0] << 8) | (rx_buffer[1]);
+ 118:Src/bootloader.c **** 
+ 119:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 120:Src/bootloader.c ****   wait_for_ack();
+ 121:Src/bootloader.c **** 
+ 122:Src/bootloader.c ****   return id;
+ 123:Src/bootloader.c **** }
+ 124:Src/bootloader.c **** 
+ 125:Src/bootloader.c **** /**
+ 126:Src/bootloader.c ****   * @brief  Read data from any valid memory address
+ 127:Src/bootloader.c ****   * @param  address: start address
+ 128:Src/bootloader.c ****   * @param  nob: number of bytes to be read
+ 129:Src/bootloader.c ****   * @param  pData: pointer to destination data buffer
+ 130:Src/bootloader.c ****   * @retval None
+ 131:Src/bootloader.c ****   */
+ 132:Src/bootloader.c **** void BL_ReadMemory_Command(uint32_t address, uint8_t nob, uint8_t *pData)
+ 133:Src/bootloader.c **** {
+ 134:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 135:Src/bootloader.c ****   uint8_t addr_frame[5];
+ 136:Src/bootloader.c ****   uint8_t nob_frame[2];
+ 137:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 138:Src/bootloader.c **** 
+ 139:Src/bootloader.c ****   /* Send start of frame (0x5A) + Read Memory command frame (0x11 0xEE) */
+ 140:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 141:Src/bootloader.c ****   cmd_frame[1] = RMEM_COMMAND;
+ 142:Src/bootloader.c ****   cmd_frame[2] = RMEM_COMMAND ^ 0xFFU;
+ 143:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 144:Src/bootloader.c **** 
+ARM GAS  /tmp/ccMvkkdN.s 			page 4
+
+
+ 145:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 146:Src/bootloader.c ****   wait_for_ack();
+ 147:Src/bootloader.c **** 
+ 148:Src/bootloader.c ****   /* Send data frame: start address (4 Bytes) + Checksum (1 Byte) */
+ 149:Src/bootloader.c ****   addr_frame[0] = (uint8_t)((address >> 24) & 0xFFU);
+ 150:Src/bootloader.c ****   addr_frame[1] = (uint8_t)((address >> 16) & 0xFFU);
+ 151:Src/bootloader.c ****   addr_frame[2] = (uint8_t)((address >> 8) & 0xFFU);
+ 152:Src/bootloader.c ****   addr_frame[3] = (uint8_t)(address & 0xFFU);
+ 153:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 154:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, addr_frame, 5U, 1000U);
+ 155:Src/bootloader.c **** 
+ 156:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 157:Src/bootloader.c ****   wait_for_ack();
+ 158:Src/bootloader.c **** 
+ 159:Src/bootloader.c ****   /* Send data frame: number of Bytes to be read (1 Byte) + checksum (1 Byte) */
+ 160:Src/bootloader.c ****   nob_frame[0] = (nob - 1U);
+ 161:Src/bootloader.c ****   nob_frame[1] = (nob - 1U) ^ 0xFFU;
+ 162:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, nob_frame, 2U, 1000U);
+ 163:Src/bootloader.c **** 
+ 164:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 165:Src/bootloader.c ****   wait_for_ack();
+ 166:Src/bootloader.c **** 
+ 167:Src/bootloader.c ****   /* Receive data frame: data from the Bootloader */
+ 168:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U);
+ 169:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, pData, (uint16_t)nob, 1000U);
+ 170:Src/bootloader.c **** }
+ 171:Src/bootloader.c **** 
+ 172:Src/bootloader.c **** /**
+ 173:Src/bootloader.c ****   * @brief  Execute the downloaded code or any other code by branching to a
+ 174:Src/bootloader.c ****   *         specified address
+ 175:Src/bootloader.c ****   * @param  address: start address - 4
+ 176:Src/bootloader.c ****   * @retval None
+ 177:Src/bootloader.c ****   */
+ 178:Src/bootloader.c **** void BL_Go_Command(uint32_t address)
+ 179:Src/bootloader.c **** {
+ 180:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 181:Src/bootloader.c ****   uint8_t addr_frame[5];
+ 182:Src/bootloader.c **** 
+ 183:Src/bootloader.c ****   /* Send start of frame (0x5A) + Go command frame (0x21 0xDE) */
+ 184:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 185:Src/bootloader.c ****   cmd_frame[1] = GO_COMMAND;
+ 186:Src/bootloader.c ****   cmd_frame[2] = GO_COMMAND ^ 0xFFU;
+ 187:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 188:Src/bootloader.c **** 
+ 189:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 190:Src/bootloader.c ****   wait_for_ack();
+ 191:Src/bootloader.c **** 
+ 192:Src/bootloader.c ****   /* Send data frame: Go address (4 Bytes) + Checksum (1 Byte) */
+ 193:Src/bootloader.c ****   addr_frame[0] = ((uint8_t)(address >> 24) & 0xFFU);
+ 194:Src/bootloader.c ****   addr_frame[1] = ((uint8_t)(address >> 16) & 0xFFU);
+ 195:Src/bootloader.c ****   addr_frame[2] = ((uint8_t)(address >> 8) & 0xFFU);
+ 196:Src/bootloader.c ****   addr_frame[3] = ((uint8_t)address & 0xFFU);
+ 197:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 198:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, addr_frame, 5U, 1000U);
+ 199:Src/bootloader.c **** 
+ 200:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 201:Src/bootloader.c ****   wait_for_ack();
+ARM GAS  /tmp/ccMvkkdN.s 			page 5
+
+
+ 202:Src/bootloader.c **** }
+ 203:Src/bootloader.c **** 
+ 204:Src/bootloader.c **** /**
+ 205:Src/bootloader.c ****   * @brief  Write data to any valid memory address
+ 206:Src/bootloader.c ****   * @param  address: start address
+ 207:Src/bootloader.c ****   * @param  nob: number of bytes to be written
+ 208:Src/bootloader.c ****   * @param  pData: pointer to source data pointer
+ 209:Src/bootloader.c ****   * @retval None
+ 210:Src/bootloader.c ****   */
+ 211:Src/bootloader.c **** void BL_WriteMemory_Command(uint32_t address, uint8_t nob, uint8_t *pData)
+ 212:Src/bootloader.c **** {
+ 213:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 214:Src/bootloader.c ****   uint8_t addr_frame[5];
+ 215:Src/bootloader.c ****   uint8_t n = nob - 1U;
+ 216:Src/bootloader.c ****   uint8_t checksum = xor_checksum(pData, nob) ^ n;
+ 217:Src/bootloader.c **** 
+ 218:Src/bootloader.c ****   /* Send start of frame (0x5A) + Write Memory command frame (0x21 0xDE) */
+ 219:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 220:Src/bootloader.c ****   cmd_frame[1] = WMEM_COMMAND;
+ 221:Src/bootloader.c ****   cmd_frame[2] = WMEM_COMMAND ^ 0xFFU;
+ 222:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 223:Src/bootloader.c **** 
+ 224:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 225:Src/bootloader.c ****   wait_for_ack();
+ 226:Src/bootloader.c **** 
+ 227:Src/bootloader.c ****   /* Send data frame: Write Memory start address (4 Bytes) + Checksum (1 Byte) */
+ 228:Src/bootloader.c ****   addr_frame[0] = ((uint8_t)(address >> 24) & 0xFFU);
+ 229:Src/bootloader.c ****   addr_frame[1] = ((uint8_t)(address >> 16) & 0xFFU);
+ 230:Src/bootloader.c ****   addr_frame[2] = ((uint8_t)(address >> 8) & 0xFFU);
+ 231:Src/bootloader.c ****   addr_frame[3] = ((uint8_t)address & 0xFFU);
+ 232:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 233:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, addr_frame, 5U, 1000U);
+ 234:Src/bootloader.c **** 
+ 235:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 236:Src/bootloader.c ****   wait_for_ack();
+ 237:Src/bootloader.c **** 
+ 238:Src/bootloader.c ****   /* Send data frame: N number of Bytes to be written (1 Byte),
+ 239:Src/bootloader.c ****      N + 1 data Bytes and a checksum (1 Byte) */
+ 240:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &n, 1U, 1000U);
+ 241:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, pData, (uint16_t)nob, 1000U);
+ 242:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &checksum, 1U, 1000U);
+ 243:Src/bootloader.c **** 
+ 244:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 245:Src/bootloader.c ****   wait_for_ack();
+ 246:Src/bootloader.c **** }
+ 247:Src/bootloader.c **** 
+ 248:Src/bootloader.c **** /**
+ 249:Src/bootloader.c ****   * @brief  Erase one or more Flash memory pages or sectors
+ 250:Src/bootloader.c ****   * @param  nb: number of pages or sectors to be erased
+ 251:Src/bootloader.c ****   *         This parameter can also be one of the special erase values:
+ 252:Src/bootloader.c ****   *           @arg @ref ERASE_ALL for a global mass erase
+ 253:Src/bootloader.c ****   *           @arg @ref ERASE_BANK1 for a Bank 1 mass erase (only for products supporting this feat
+ 254:Src/bootloader.c ****   *           @arg @ref ERASE_BANK2 for a Bank 2 mass erase (only for products supporting this feat
+ 255:Src/bootloader.c ****   *         Values from 0xFFFC to 0xFFF0 are reserved
+ 256:Src/bootloader.c ****   * @param  code: memory page or sector
+ 257:Src/bootloader.c ****   * @retval None
+ 258:Src/bootloader.c ****   */
+ARM GAS  /tmp/ccMvkkdN.s 			page 6
+
+
+ 259:Src/bootloader.c **** void BL_EraseMemory_Command(uint16_t nb, uint8_t code)
+ 260:Src/bootloader.c **** {
+ 261:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 262:Src/bootloader.c ****   uint8_t data_frame[3];
+ 263:Src/bootloader.c **** 
+ 264:Src/bootloader.c ****   /* Send start of frame (0x5A) + Erase Memory command frame (0x44 0xBB) */
+ 265:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 266:Src/bootloader.c ****   cmd_frame[1] = EMEM_COMMAND;
+ 267:Src/bootloader.c ****   cmd_frame[2] = EMEM_COMMAND ^ 0xFFU;
+ 268:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 269:Src/bootloader.c **** 
+ 270:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 271:Src/bootloader.c ****   wait_for_ack();
+ 272:Src/bootloader.c **** 
+ 273:Src/bootloader.c ****   /* Send data frame: nb (2 Bytes), the number of pages or sectors to be
+ 274:Src/bootloader.c ****      erased + checksum (1 Byte)*/
+ 275:Src/bootloader.c ****   data_frame[0] = (uint8_t)(nb >> 8) & 0xFFU;
+ 276:Src/bootloader.c ****   data_frame[1] = (uint8_t)nb & 0xFFU;
+ 277:Src/bootloader.c ****   data_frame[2] = data_frame[0] ^ data_frame[1];
+ 278:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, data_frame, 3U, 1000U);
+ 279:Src/bootloader.c **** 
+ 280:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 281:Src/bootloader.c ****   wait_for_ack();
+ 282:Src/bootloader.c **** 
+ 283:Src/bootloader.c ****   /* If non-special erase, send page number (2 Bytes) + checksum (1 Byte)*/
+ 284:Src/bootloader.c ****   if ((nb >> 4) != 0xFFF)
+ 285:Src/bootloader.c ****   {
+ 286:Src/bootloader.c ****     data_frame[0] = (uint8_t)(code >> 8) & 0xFFU;
+ 287:Src/bootloader.c ****     data_frame[1] = code & 0xFFU;
+ 288:Src/bootloader.c ****     data_frame[2] = data_frame[0] ^ data_frame[1];
+ 289:Src/bootloader.c ****     HAL_SPI_Transmit(SpiHandle, data_frame, 3U, 1000U);
+ 290:Src/bootloader.c **** 
+ 291:Src/bootloader.c ****     /* Wait for ACK or NACK frame */
+ 292:Src/bootloader.c ****     wait_for_ack();
+ 293:Src/bootloader.c ****   }
+ 294:Src/bootloader.c **** }
+ 295:Src/bootloader.c **** 
+ 296:Src/bootloader.c **** /**
+ 297:Src/bootloader.c ****   * @brief  Enable write protection for some or all Flash memory sectors
+ 298:Src/bootloader.c ****   * @param  nb: number of sectors to be write protected
+ 299:Src/bootloader.c ****   * @param  codes: pointer to sectors codes to be write protected
+ 300:Src/bootloader.c ****   * @retval None
+ 301:Src/bootloader.c ****   */
+ 302:Src/bootloader.c **** void BL_WriteProtect_Command(uint8_t nb, uint8_t *codes)
+ 303:Src/bootloader.c **** {
+ 304:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 305:Src/bootloader.c ****   uint8_t data_frame[3];
+ 306:Src/bootloader.c ****   uint8_t n = nb - 1U;
+ 307:Src/bootloader.c ****   uint8_t checksum;
+ 308:Src/bootloader.c **** 
+ 309:Src/bootloader.c ****   /* Send start of frame (0x5A) + Write Protect command frame (0x63 0x9C) */
+ 310:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 311:Src/bootloader.c ****   cmd_frame[1] = WP_COMMAND;
+ 312:Src/bootloader.c ****   cmd_frame[2] = WP_COMMAND ^ 0xFFU;
+ 313:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 314:Src/bootloader.c **** 
+ 315:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ARM GAS  /tmp/ccMvkkdN.s 			page 7
+
+
+ 316:Src/bootloader.c ****   wait_for_ack();
+ 317:Src/bootloader.c **** 
+ 318:Src/bootloader.c ****   /* Send data frame: number of sectors to be protected (1 Byte) + checksum (1 Byte) */
+ 319:Src/bootloader.c ****   /* The bootloader receives one byte that contains N, the number of sectors to
+ 320:Src/bootloader.c ****      be write-protected - 1 (0 <= N <= 255) */
+ 321:Src/bootloader.c ****   data_frame[0] = n;
+ 322:Src/bootloader.c ****   data_frame[1] = n ^ 0xFFU;
+ 323:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, data_frame, 2U, 1000U);
+ 324:Src/bootloader.c **** 
+ 325:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 326:Src/bootloader.c ****   wait_for_ack();
+ 327:Src/bootloader.c **** 
+ 328:Src/bootloader.c ****   /* Compute Checksum */
+ 329:Src/bootloader.c ****   checksum = xor_checksum(codes, nb);
+ 330:Src/bootloader.c **** 
+ 331:Src/bootloader.c ****   /* Send data frame: sector codes (nb Bytes) + checksum (1 Byte) */
+ 332:Src/bootloader.c ****   memcpy(data_frame, codes, (uint32_t)nb);
+ 333:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, data_frame, (uint16_t)nb, 1000U);
+ 334:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &checksum, 1U, 1000U);
+ 335:Src/bootloader.c **** 
+ 336:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 337:Src/bootloader.c ****   wait_for_ack();
+ 338:Src/bootloader.c **** }
+ 339:Src/bootloader.c **** 
+ 340:Src/bootloader.c **** /**
+ 341:Src/bootloader.c ****  * @brief Disable write protection of all the Flash memory sectors
+ 342:Src/bootloader.c ****  * @param  None
+ 343:Src/bootloader.c ****  * @retval None
+ 344:Src/bootloader.c ****  */
+ 345:Src/bootloader.c **** void BL_WriteUnprotect_Command(void)
+ 346:Src/bootloader.c **** {
+ 347:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 348:Src/bootloader.c **** 
+ 349:Src/bootloader.c ****   /* Send start of frame (0x5A) + Write Unprotect command frame (0x73 0x8C) */
+ 350:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 351:Src/bootloader.c ****   cmd_frame[1] = WU_COMMAND;
+ 352:Src/bootloader.c ****   cmd_frame[2] = WU_COMMAND ^ 0xFFU;
+ 353:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 354:Src/bootloader.c **** 
+ 355:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 356:Src/bootloader.c ****   wait_for_ack();
+ 357:Src/bootloader.c **** 
+ 358:Src/bootloader.c ****   /* Wait for second ACK or NACK frame after unprotection operation */
+ 359:Src/bootloader.c ****   wait_for_ack();
+ 360:Src/bootloader.c **** }
+ 361:Src/bootloader.c **** 
+ 362:Src/bootloader.c **** /**
+ 363:Src/bootloader.c ****  * @brief  Enable Flash memory read protection
+ 364:Src/bootloader.c ****  * @note   At the end of the Readout Protect command, the bootloader generates
+ 365:Src/bootloader.c ****  *         a system reset to take into account the new configuration of the
+ 366:Src/bootloader.c ****  *         option byte.
+ 367:Src/bootloader.c ****  * @param  None
+ 368:Src/bootloader.c ****  * @retval None
+ 369:Src/bootloader.c ****  */
+ 370:Src/bootloader.c **** void BL_ReadoutProtect_Command(void)
+ 371:Src/bootloader.c **** {
+ 372:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ARM GAS  /tmp/ccMvkkdN.s 			page 8
+
+
+ 373:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 374:Src/bootloader.c **** 
+ 375:Src/bootloader.c ****   /* Send dummy */
+ 376:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U);
+ 377:Src/bootloader.c **** 
+ 378:Src/bootloader.c ****   /* Send start of frame (0x5A) + Read Pprotect command frame (0x82 0x7D) */
+ 379:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 380:Src/bootloader.c ****   cmd_frame[1] = RP_COMMAND;
+ 381:Src/bootloader.c ****   cmd_frame[2] = RP_COMMAND ^ 0xFFU;
+ 382:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 383:Src/bootloader.c **** 
+ 384:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 385:Src/bootloader.c ****   wait_for_ack();
+ 386:Src/bootloader.c **** 
+ 387:Src/bootloader.c ****   /* Wait for ACK or NACK frame after read protection has been set */
+ 388:Src/bootloader.c ****   wait_for_ack();
+ 389:Src/bootloader.c **** }
+ 390:Src/bootloader.c **** 
+ 391:Src/bootloader.c **** /**
+ 392:Src/bootloader.c ****  * @brief  Disable Flash memory read protection
+ 393:Src/bootloader.c ****  * @note   After first ACK, the bootloader erases all the Flash
+ 394:Src/bootloader.c ****  * @param  None
+ 395:Src/bootloader.c ****  * @retval None
+ 396:Src/bootloader.c ****  */
+ 397:Src/bootloader.c **** void BL_ReadoutUnprotect_Command(void)
+ 398:Src/bootloader.c **** {
+ 399:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 400:Src/bootloader.c **** 
+ 401:Src/bootloader.c ****   /* Send start of frame (0x5A) + Readout Unprotect command frame (0x92 0x6D) */
+ 402:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 403:Src/bootloader.c ****   cmd_frame[1] = RU_COMMAND;
+ 404:Src/bootloader.c ****   cmd_frame[2] = RU_COMMAND ^ 0xFFU;
+ 405:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 406:Src/bootloader.c **** 
+ 407:Src/bootloader.c ****   /* Wait for ACK or NACK frame */
+ 408:Src/bootloader.c ****   wait_for_ack();
+ 409:Src/bootloader.c **** 
+ 410:Src/bootloader.c ****   /* Wait for second ACK or NACK frame after unprotection operation */
+ 411:Src/bootloader.c ****   wait_for_ack();
+ 412:Src/bootloader.c **** }
+ 413:Src/bootloader.c **** 
+ 414:Src/bootloader.c **** static void wait_for_ack(void)
+ 415:Src/bootloader.c **** {
+ 416:Src/bootloader.c ****   uint8_t resp;
+ 417:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 418:Src/bootloader.c ****   uint8_t ack = BL_ACK;
+ 419:Src/bootloader.c ****   uint32_t ack_received = 0U;
+ 420:Src/bootloader.c **** 
+ 421:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U);
+ 422:Src/bootloader.c ****   while (ack_received != 1U)
+ 423:Src/bootloader.c ****   {
+ 424:Src/bootloader.c ****     HAL_SPI_TransmitReceive(SpiHandle, &dummy, &resp, 1U, 1000U);
+ 425:Src/bootloader.c ****     if (resp == BL_ACK)
+ 426:Src/bootloader.c ****     {
+ 427:Src/bootloader.c ****       /* Received ACK: send ACK */
+ 428:Src/bootloader.c ****       HAL_SPI_Transmit(SpiHandle, &ack, 1U, 1000U);
+ 429:Src/bootloader.c ****       ack_received = 1U;
+ARM GAS  /tmp/ccMvkkdN.s 			page 9
+
+
+ 430:Src/bootloader.c ****     }
+ 431:Src/bootloader.c ****     else if (resp == BL_NAK)
+ 432:Src/bootloader.c ****     {
+ 433:Src/bootloader.c ****       /* Received NACK */
+ 434:Src/bootloader.c ****       Error_Handler();
+ 435:Src/bootloader.c ****     }
+ 436:Src/bootloader.c ****     else
+ 437:Src/bootloader.c ****     {
+ 438:Src/bootloader.c ****       /* Received junk */
+ 439:Src/bootloader.c ****     }
+ 440:Src/bootloader.c ****   }
+ 441:Src/bootloader.c **** }
+ 442:Src/bootloader.c **** 
+ 443:Src/bootloader.c **** static uint8_t xor_checksum(const uint8_t pData[], uint8_t len)
+ 444:Src/bootloader.c **** {
+  29              		.loc 1 444 1 view -0
+  30              		.cfi_startproc
+  31              		@ args = 0, pretend = 0, frame = 0
+  32              		@ frame_needed = 0, uses_anonymous_args = 0
+  33              		@ link register save eliminated.
+  34              		.loc 1 444 1 is_stmt 0 view .LVU1
+  35 0000 8446     		mov	ip, r0
+ 445:Src/bootloader.c ****   uint8_t sum = *pData;
+  36              		.loc 1 445 3 is_stmt 1 view .LVU2
+  37              		.loc 1 445 11 is_stmt 0 view .LVU3
+  38 0002 0078     		ldrb	r0, [r0]	@ zero_extendqisi2
+  39              	.LVL1:
+ 446:Src/bootloader.c **** 
+ 447:Src/bootloader.c ****   for (uint8_t i = 1U; i < len; i++)
+  40              		.loc 1 447 3 is_stmt 1 view .LVU4
+  41              	.LBB2:
+  42              		.loc 1 447 8 view .LVU5
+  43              		.loc 1 447 16 is_stmt 0 view .LVU6
+  44 0004 0123     		movs	r3, #1
+  45              		.loc 1 447 3 view .LVU7
+  46 0006 04E0     		b	.L2
+  47              	.LVL2:
+  48              	.L3:
+ 448:Src/bootloader.c ****   {
+ 449:Src/bootloader.c ****     sum ^= pData[i];
+  49              		.loc 1 449 5 is_stmt 1 discriminator 3 view .LVU8
+  50              		.loc 1 449 17 is_stmt 0 discriminator 3 view .LVU9
+  51 0008 1CF80320 		ldrb	r2, [ip, r3]	@ zero_extendqisi2
+  52              		.loc 1 449 9 discriminator 3 view .LVU10
+  53 000c 5040     		eors	r0, r0, r2
+  54              	.LVL3:
+ 447:Src/bootloader.c ****   {
+  55              		.loc 1 447 33 is_stmt 1 discriminator 3 view .LVU11
+ 447:Src/bootloader.c ****   {
+  56              		.loc 1 447 34 is_stmt 0 discriminator 3 view .LVU12
+  57 000e 0133     		adds	r3, r3, #1
+  58              	.LVL4:
+ 447:Src/bootloader.c ****   {
+  59              		.loc 1 447 34 discriminator 3 view .LVU13
+  60 0010 DBB2     		uxtb	r3, r3
+  61              	.LVL5:
+  62              	.L2:
+ARM GAS  /tmp/ccMvkkdN.s 			page 10
+
+
+ 447:Src/bootloader.c ****   {
+  63              		.loc 1 447 24 is_stmt 1 discriminator 1 view .LVU14
+ 447:Src/bootloader.c ****   {
+  64              		.loc 1 447 3 is_stmt 0 discriminator 1 view .LVU15
+  65 0012 8B42     		cmp	r3, r1
+  66 0014 F8D3     		bcc	.L3
+ 447:Src/bootloader.c ****   {
+  67              		.loc 1 447 3 discriminator 1 view .LVU16
+  68              	.LBE2:
+ 450:Src/bootloader.c ****   }
+ 451:Src/bootloader.c **** 
+ 452:Src/bootloader.c ****   return sum;
+  69              		.loc 1 452 3 is_stmt 1 view .LVU17
+ 453:Src/bootloader.c **** }...
+  70              		.loc 1 453 1 is_stmt 0 view .LVU18
+  71 0016 7047     		bx	lr
+  72              		.cfi_endproc
+  73              	.LFE143:
+  75              		.section	.text.wait_for_ack,"ax",%progbits
+  76              		.align	1
+  77              		.syntax unified
+  78              		.thumb
+  79              		.thumb_func
+  80              		.fpu fpv4-sp-d16
+  82              	wait_for_ack:
+  83              	.LFB142:
+ 415:Src/bootloader.c **** {
+  84              		.loc 1 415 1 is_stmt 1 view -0
+  85              		.cfi_startproc
+  86              		@ args = 0, pretend = 0, frame = 8
+  87              		@ frame_needed = 0, uses_anonymous_args = 0
+  88 0000 00B5     		push	{lr}
+  89              	.LCFI0:
+  90              		.cfi_def_cfa_offset 4
+  91              		.cfi_offset 14, -4
+  92 0002 85B0     		sub	sp, sp, #20
+  93              	.LCFI1:
+  94              		.cfi_def_cfa_offset 24
+ 416:Src/bootloader.c ****   uint8_t resp;
+  95              		.loc 1 416 3 view .LVU20
+ 417:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+  96              		.loc 1 417 3 view .LVU21
+ 417:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+  97              		.loc 1 417 11 is_stmt 0 view .LVU22
+  98 0004 0023     		movs	r3, #0
+  99 0006 8DF80E30 		strb	r3, [sp, #14]
+ 418:Src/bootloader.c ****   uint8_t ack = BL_ACK;
+ 100              		.loc 1 418 3 is_stmt 1 view .LVU23
+ 418:Src/bootloader.c ****   uint8_t ack = BL_ACK;
+ 101              		.loc 1 418 11 is_stmt 0 view .LVU24
+ 102 000a 7923     		movs	r3, #121
+ 103 000c 8DF80D30 		strb	r3, [sp, #13]
+ 419:Src/bootloader.c ****   uint32_t ack_received = 0U;
+ 104              		.loc 1 419 3 is_stmt 1 view .LVU25
+ 105              	.LVL6:
+ 421:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U);
+ 106              		.loc 1 421 3 view .LVU26
+ARM GAS  /tmp/ccMvkkdN.s 			page 11
+
+
+ 107 0010 4FF47A73 		mov	r3, #1000
+ 108 0014 0122     		movs	r2, #1
+ 109 0016 0DF10E01 		add	r1, sp, #14
+ 110 001a 1248     		ldr	r0, .L13
+ 111 001c 0068     		ldr	r0, [r0]
+ 112 001e FFF7FEFF 		bl	HAL_SPI_Transmit
+ 113              	.LVL7:
+ 422:Src/bootloader.c ****   while (ack_received != 1U)
+ 114              		.loc 1 422 3 view .LVU27
+ 115              	.L6:
+ 439:Src/bootloader.c ****     }
+ 116              		.loc 1 439 5 view .LVU28
+ 422:Src/bootloader.c ****   while (ack_received != 1U)
+ 117              		.loc 1 422 9 view .LVU29
+ 424:Src/bootloader.c ****     HAL_SPI_TransmitReceive(SpiHandle, &dummy, &resp, 1U, 1000U);
+ 118              		.loc 1 424 5 view .LVU30
+ 119 0022 4FF47A73 		mov	r3, #1000
+ 120 0026 0093     		str	r3, [sp]
+ 121 0028 0123     		movs	r3, #1
+ 122 002a 0DF10F02 		add	r2, sp, #15
+ 123 002e 0DF10E01 		add	r1, sp, #14
+ 124 0032 0C48     		ldr	r0, .L13
+ 125 0034 0068     		ldr	r0, [r0]
+ 126 0036 FFF7FEFF 		bl	HAL_SPI_TransmitReceive
+ 127              	.LVL8:
+ 425:Src/bootloader.c ****     if (resp == BL_ACK)
+ 128              		.loc 1 425 5 view .LVU31
+ 425:Src/bootloader.c ****     if (resp == BL_ACK)
+ 129              		.loc 1 425 14 is_stmt 0 view .LVU32
+ 130 003a 9DF80F30 		ldrb	r3, [sp, #15]	@ zero_extendqisi2
+ 425:Src/bootloader.c ****     if (resp == BL_ACK)
+ 131              		.loc 1 425 8 view .LVU33
+ 132 003e 792B     		cmp	r3, #121
+ 133 0040 04D0     		beq	.L12
+ 431:Src/bootloader.c ****     else if (resp == BL_NAK)
+ 134              		.loc 1 431 10 is_stmt 1 view .LVU34
+ 431:Src/bootloader.c ****     else if (resp == BL_NAK)
+ 135              		.loc 1 431 13 is_stmt 0 view .LVU35
+ 136 0042 1F2B     		cmp	r3, #31
+ 137 0044 EDD1     		bne	.L6
+ 434:Src/bootloader.c ****       Error_Handler();
+ 138              		.loc 1 434 7 is_stmt 1 view .LVU36
+ 139 0046 FFF7FEFF 		bl	Error_Handler
+ 140              	.LVL9:
+ 141 004a EAE7     		b	.L6
+ 142              	.L12:
+ 428:Src/bootloader.c ****       HAL_SPI_Transmit(SpiHandle, &ack, 1U, 1000U);
+ 143              		.loc 1 428 7 view .LVU37
+ 144 004c 4FF47A73 		mov	r3, #1000
+ 145 0050 0122     		movs	r2, #1
+ 146 0052 0DF10D01 		add	r1, sp, #13
+ 147 0056 0348     		ldr	r0, .L13
+ 148 0058 0068     		ldr	r0, [r0]
+ 149 005a FFF7FEFF 		bl	HAL_SPI_Transmit
+ 150              	.LVL10:
+ 429:Src/bootloader.c ****       ack_received = 1U;
+ 151              		.loc 1 429 7 view .LVU38
+ARM GAS  /tmp/ccMvkkdN.s 			page 12
+
+
+ 439:Src/bootloader.c ****     }
+ 152              		.loc 1 439 5 view .LVU39
+ 422:Src/bootloader.c ****   while (ack_received != 1U)
+ 153              		.loc 1 422 9 view .LVU40
+ 441:Src/bootloader.c **** }
+ 154              		.loc 1 441 1 is_stmt 0 view .LVU41
+ 155 005e 05B0     		add	sp, sp, #20
+ 156              	.LCFI2:
+ 157              		.cfi_def_cfa_offset 4
+ 158              		@ sp needed
+ 159 0060 5DF804FB 		ldr	pc, [sp], #4
+ 160              	.L14:
+ 161              		.align	2
+ 162              	.L13:
+ 163 0064 00000000 		.word	.LANCHOR0
+ 164              		.cfi_endproc
+ 165              	.LFE142:
+ 167              		.section	.text.BL_Init,"ax",%progbits
+ 168              		.align	1
+ 169              		.global	BL_Init
+ 170              		.syntax unified
+ 171              		.thumb
+ 172              		.thumb_func
+ 173              		.fpu fpv4-sp-d16
+ 175              	BL_Init:
+ 176              	.LVL11:
+ 177              	.LFB130:
+  17:Src/bootloader.c **** {
+ 178              		.loc 1 17 1 is_stmt 1 view -0
+ 179              		.cfi_startproc
+ 180              		@ args = 0, pretend = 0, frame = 8
+ 181              		@ frame_needed = 0, uses_anonymous_args = 0
+  17:Src/bootloader.c **** {
+ 182              		.loc 1 17 1 is_stmt 0 view .LVU43
+ 183 0000 00B5     		push	{lr}
+ 184              	.LCFI3:
+ 185              		.cfi_def_cfa_offset 4
+ 186              		.cfi_offset 14, -4
+ 187 0002 83B0     		sub	sp, sp, #12
+ 188              	.LCFI4:
+ 189              		.cfi_def_cfa_offset 16
+  18:Src/bootloader.c ****   uint8_t sync_byte = BL_SPI_SOF;
+ 190              		.loc 1 18 3 is_stmt 1 view .LVU44
+  18:Src/bootloader.c ****   uint8_t sync_byte = BL_SPI_SOF;
+ 191              		.loc 1 18 11 is_stmt 0 view .LVU45
+ 192 0004 5A23     		movs	r3, #90
+ 193 0006 8DF80730 		strb	r3, [sp, #7]
+  21:Src/bootloader.c ****   SpiHandle = hspi;
+ 194              		.loc 1 21 3 is_stmt 1 view .LVU46
+  21:Src/bootloader.c ****   SpiHandle = hspi;
+ 195              		.loc 1 21 13 is_stmt 0 view .LVU47
+ 196 000a 074B     		ldr	r3, .L17
+ 197 000c 1860     		str	r0, [r3]
+  24:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &sync_byte, 1U, 1000U);
+ 198              		.loc 1 24 3 is_stmt 1 view .LVU48
+ 199 000e 4FF47A73 		mov	r3, #1000
+ 200 0012 0122     		movs	r2, #1
+ARM GAS  /tmp/ccMvkkdN.s 			page 13
+
+
+ 201 0014 0DF10701 		add	r1, sp, #7
+ 202 0018 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 203              	.LVL12:
+  27:Src/bootloader.c ****   wait_for_ack();
+ 204              		.loc 1 27 3 view .LVU49
+ 205 001c FFF7FEFF 		bl	wait_for_ack
+ 206              	.LVL13:
+  28:Src/bootloader.c **** }
+ 207              		.loc 1 28 1 is_stmt 0 view .LVU50
+ 208 0020 03B0     		add	sp, sp, #12
+ 209              	.LCFI5:
+ 210              		.cfi_def_cfa_offset 4
+ 211              		@ sp needed
+ 212 0022 5DF804FB 		ldr	pc, [sp], #4
+ 213              	.L18:
+ 214 0026 00BF     		.align	2
+ 215              	.L17:
+ 216 0028 00000000 		.word	.LANCHOR0
+ 217              		.cfi_endproc
+ 218              	.LFE130:
+ 220              		.section	.text.BL_Get_Command,"ax",%progbits
+ 221              		.align	1
+ 222              		.global	BL_Get_Command
+ 223              		.syntax unified
+ 224              		.thumb
+ 225              		.thumb_func
+ 226              		.fpu fpv4-sp-d16
+ 228              	BL_Get_Command:
+ 229              	.LVL14:
+ 230              	.LFB131:
+  36:Src/bootloader.c **** {
+ 231              		.loc 1 36 1 is_stmt 1 view -0
+ 232              		.cfi_startproc
+ 233              		@ args = 0, pretend = 0, frame = 8
+ 234              		@ frame_needed = 0, uses_anonymous_args = 0
+  36:Src/bootloader.c **** {
+ 235              		.loc 1 36 1 is_stmt 0 view .LVU52
+ 236 0000 30B5     		push	{r4, r5, lr}
+ 237              	.LCFI6:
+ 238              		.cfi_def_cfa_offset 12
+ 239              		.cfi_offset 4, -12
+ 240              		.cfi_offset 5, -8
+ 241              		.cfi_offset 14, -4
+ 242 0002 83B0     		sub	sp, sp, #12
+ 243              	.LCFI7:
+ 244              		.cfi_def_cfa_offset 24
+ 245 0004 0546     		mov	r5, r0
+  37:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 246              		.loc 1 37 3 is_stmt 1 view .LVU53
+  38:Src/bootloader.c ****   uint8_t rx_number_of_bytes;
+ 247              		.loc 1 38 3 view .LVU54
+  41:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 248              		.loc 1 41 3 view .LVU55
+  41:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 249              		.loc 1 41 16 is_stmt 0 view .LVU56
+ 250 0006 5A23     		movs	r3, #90
+ 251 0008 8DF80430 		strb	r3, [sp, #4]
+ARM GAS  /tmp/ccMvkkdN.s 			page 14
+
+
+  42:Src/bootloader.c ****   cmd_frame[1] = GET_CMD_COMMAND;
+ 252              		.loc 1 42 3 is_stmt 1 view .LVU57
+  42:Src/bootloader.c ****   cmd_frame[1] = GET_CMD_COMMAND;
+ 253              		.loc 1 42 16 is_stmt 0 view .LVU58
+ 254 000c 0023     		movs	r3, #0
+ 255 000e 8DF80530 		strb	r3, [sp, #5]
+  43:Src/bootloader.c ****   cmd_frame[2] = GET_CMD_COMMAND ^ 0xFFU; /*!< Command XOR checksum */
+ 256              		.loc 1 43 3 is_stmt 1 view .LVU59
+  43:Src/bootloader.c ****   cmd_frame[2] = GET_CMD_COMMAND ^ 0xFFU; /*!< Command XOR checksum */
+ 257              		.loc 1 43 16 is_stmt 0 view .LVU60
+ 258 0012 FF23     		movs	r3, #255
+ 259 0014 8DF80630 		strb	r3, [sp, #6]
+  44:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 260              		.loc 1 44 3 is_stmt 1 view .LVU61
+ 261 0018 174C     		ldr	r4, .L21
+ 262 001a 4FF47A73 		mov	r3, #1000
+ 263 001e 0322     		movs	r2, #3
+ 264 0020 01A9     		add	r1, sp, #4
+ 265 0022 2068     		ldr	r0, [r4]
+ 266              	.LVL15:
+  44:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 267              		.loc 1 44 3 is_stmt 0 view .LVU62
+ 268 0024 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 269              	.LVL16:
+  47:Src/bootloader.c ****   wait_for_ack();
+ 270              		.loc 1 47 3 is_stmt 1 view .LVU63
+ 271 0028 FFF7FEFF 		bl	wait_for_ack
+ 272              	.LVL17:
+  50:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, &rx_number_of_bytes, 1U, 1000U); /*!< Dummy read */
+ 273              		.loc 1 50 3 view .LVU64
+ 274 002c 4FF47A73 		mov	r3, #1000
+ 275 0030 0122     		movs	r2, #1
+ 276 0032 0DF10301 		add	r1, sp, #3
+ 277 0036 2068     		ldr	r0, [r4]
+ 278 0038 FFF7FEFF 		bl	HAL_SPI_Receive
+ 279              	.LVL18:
+  51:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, &rx_number_of_bytes, 1U, 1000U);
+ 280              		.loc 1 51 3 view .LVU65
+ 281 003c 4FF47A73 		mov	r3, #1000
+ 282 0040 0122     		movs	r2, #1
+ 283 0042 0DF10301 		add	r1, sp, #3
+ 284 0046 2068     		ldr	r0, [r4]
+ 285 0048 FFF7FEFF 		bl	HAL_SPI_Receive
+ 286              	.LVL19:
+  52:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, pData, (uint16_t)rx_number_of_bytes + 1U, 1000U);
+ 287              		.loc 1 52 3 view .LVU66
+ 288 004c 9DF80320 		ldrb	r2, [sp, #3]	@ zero_extendqisi2
+ 289 0050 4FF47A73 		mov	r3, #1000
+ 290 0054 0132     		adds	r2, r2, #1
+ 291 0056 2946     		mov	r1, r5
+ 292 0058 2068     		ldr	r0, [r4]
+ 293 005a FFF7FEFF 		bl	HAL_SPI_Receive
+ 294              	.LVL20:
+  55:Src/bootloader.c ****   cmd_frame[0] = 0x79U;
+ 295              		.loc 1 55 3 view .LVU67
+  55:Src/bootloader.c ****   cmd_frame[0] = 0x79U;
+ 296              		.loc 1 55 16 is_stmt 0 view .LVU68
+ARM GAS  /tmp/ccMvkkdN.s 			page 15
+
+
+ 297 005e 7923     		movs	r3, #121
+ 298 0060 8DF80430 		strb	r3, [sp, #4]
+  56:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 1U, 1000U);
+ 299              		.loc 1 56 3 is_stmt 1 view .LVU69
+ 300 0064 4FF47A73 		mov	r3, #1000
+ 301 0068 0122     		movs	r2, #1
+ 302 006a 01A9     		add	r1, sp, #4
+ 303 006c 2068     		ldr	r0, [r4]
+ 304 006e FFF7FEFF 		bl	HAL_SPI_Transmit
+ 305              	.LVL21:
+  57:Src/bootloader.c **** }
+ 306              		.loc 1 57 1 is_stmt 0 view .LVU70
+ 307 0072 03B0     		add	sp, sp, #12
+ 308              	.LCFI8:
+ 309              		.cfi_def_cfa_offset 12
+ 310              		@ sp needed
+ 311 0074 30BD     		pop	{r4, r5, pc}
+ 312              	.LVL22:
+ 313              	.L22:
+  57:Src/bootloader.c **** }
+ 314              		.loc 1 57 1 view .LVU71
+ 315 0076 00BF     		.align	2
+ 316              	.L21:
+ 317 0078 00000000 		.word	.LANCHOR0
+ 318              		.cfi_endproc
+ 319              	.LFE131:
+ 321              		.section	.text.BL_GetVersion_Command,"ax",%progbits
+ 322              		.align	1
+ 323              		.global	BL_GetVersion_Command
+ 324              		.syntax unified
+ 325              		.thumb
+ 326              		.thumb_func
+ 327              		.fpu fpv4-sp-d16
+ 329              	BL_GetVersion_Command:
+ 330              	.LFB132:
+  66:Src/bootloader.c **** {
+ 331              		.loc 1 66 1 is_stmt 1 view -0
+ 332              		.cfi_startproc
+ 333              		@ args = 0, pretend = 0, frame = 8
+ 334              		@ frame_needed = 0, uses_anonymous_args = 0
+ 335 0000 30B5     		push	{r4, r5, lr}
+ 336              	.LCFI9:
+ 337              		.cfi_def_cfa_offset 12
+ 338              		.cfi_offset 4, -12
+ 339              		.cfi_offset 5, -8
+ 340              		.cfi_offset 14, -4
+ 341 0002 85B0     		sub	sp, sp, #20
+ 342              	.LCFI10:
+ 343              		.cfi_def_cfa_offset 32
+  67:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 344              		.loc 1 67 3 view .LVU73
+  68:Src/bootloader.c ****   uint8_t version = 0x00U;
+ 345              		.loc 1 68 3 view .LVU74
+  68:Src/bootloader.c ****   uint8_t version = 0x00U;
+ 346              		.loc 1 68 11 is_stmt 0 view .LVU75
+ 347 0004 0023     		movs	r3, #0
+ 348 0006 8DF80B30 		strb	r3, [sp, #11]
+ARM GAS  /tmp/ccMvkkdN.s 			page 16
+
+
+  69:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 349              		.loc 1 69 3 is_stmt 1 view .LVU76
+  69:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 350              		.loc 1 69 11 is_stmt 0 view .LVU77
+ 351 000a 8DF80A30 		strb	r3, [sp, #10]
+  72:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 352              		.loc 1 72 3 is_stmt 1 view .LVU78
+  72:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 353              		.loc 1 72 16 is_stmt 0 view .LVU79
+ 354 000e 5A23     		movs	r3, #90
+ 355 0010 8DF80C30 		strb	r3, [sp, #12]
+  73:Src/bootloader.c ****   cmd_frame[1] = GET_VER_COMMAND;
+ 356              		.loc 1 73 3 is_stmt 1 view .LVU80
+  73:Src/bootloader.c ****   cmd_frame[1] = GET_VER_COMMAND;
+ 357              		.loc 1 73 16 is_stmt 0 view .LVU81
+ 358 0014 0125     		movs	r5, #1
+ 359 0016 8DF80D50 		strb	r5, [sp, #13]
+  74:Src/bootloader.c ****   cmd_frame[2] = GET_VER_COMMAND ^ 0xFFU;
+ 360              		.loc 1 74 3 is_stmt 1 view .LVU82
+  74:Src/bootloader.c ****   cmd_frame[2] = GET_VER_COMMAND ^ 0xFFU;
+ 361              		.loc 1 74 16 is_stmt 0 view .LVU83
+ 362 001a FE23     		movs	r3, #254
+ 363 001c 8DF80E30 		strb	r3, [sp, #14]
+  75:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 364              		.loc 1 75 3 is_stmt 1 view .LVU84
+ 365 0020 104C     		ldr	r4, .L25
+ 366 0022 4FF47A73 		mov	r3, #1000
+ 367 0026 0322     		movs	r2, #3
+ 368 0028 03A9     		add	r1, sp, #12
+ 369 002a 2068     		ldr	r0, [r4]
+ 370 002c FFF7FEFF 		bl	HAL_SPI_Transmit
+ 371              	.LVL23:
+  78:Src/bootloader.c ****   wait_for_ack();
+ 372              		.loc 1 78 3 view .LVU85
+ 373 0030 FFF7FEFF 		bl	wait_for_ack
+ 374              	.LVL24:
+  81:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U); /*!< Send dummy */
+ 375              		.loc 1 81 3 view .LVU86
+ 376 0034 4FF47A73 		mov	r3, #1000
+ 377 0038 2A46     		mov	r2, r5
+ 378 003a 0DF10A01 		add	r1, sp, #10
+ 379 003e 2068     		ldr	r0, [r4]
+ 380 0040 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 381              	.LVL25:
+  82:Src/bootloader.c ****   HAL_SPI_TransmitReceive(SpiHandle, cmd_frame, &version, 1U, 1000U);
+ 382              		.loc 1 82 3 view .LVU87
+ 383 0044 4FF47A73 		mov	r3, #1000
+ 384 0048 0093     		str	r3, [sp]
+ 385 004a 2B46     		mov	r3, r5
+ 386 004c 0DF10B02 		add	r2, sp, #11
+ 387 0050 03A9     		add	r1, sp, #12
+ 388 0052 2068     		ldr	r0, [r4]
+ 389 0054 FFF7FEFF 		bl	HAL_SPI_TransmitReceive
+ 390              	.LVL26:
+  85:Src/bootloader.c ****   wait_for_ack();
+ 391              		.loc 1 85 3 view .LVU88
+ 392 0058 FFF7FEFF 		bl	wait_for_ack
+ARM GAS  /tmp/ccMvkkdN.s 			page 17
+
+
+ 393              	.LVL27:
+  87:Src/bootloader.c ****   return version;
+ 394              		.loc 1 87 3 view .LVU89
+  88:Src/bootloader.c **** }
+ 395              		.loc 1 88 1 is_stmt 0 view .LVU90
+ 396 005c 9DF80B00 		ldrb	r0, [sp, #11]	@ zero_extendqisi2
+ 397 0060 05B0     		add	sp, sp, #20
+ 398              	.LCFI11:
+ 399              		.cfi_def_cfa_offset 12
+ 400              		@ sp needed
+ 401 0062 30BD     		pop	{r4, r5, pc}
+ 402              	.L26:
+ 403              		.align	2
+ 404              	.L25:
+ 405 0064 00000000 		.word	.LANCHOR0
+ 406              		.cfi_endproc
+ 407              	.LFE132:
+ 409              		.section	.text.BL_GetID_Command,"ax",%progbits
+ 410              		.align	1
+ 411              		.global	BL_GetID_Command
+ 412              		.syntax unified
+ 413              		.thumb
+ 414              		.thumb_func
+ 415              		.fpu fpv4-sp-d16
+ 417              	BL_GetID_Command:
+ 418              	.LFB133:
+  96:Src/bootloader.c **** {
+ 419              		.loc 1 96 1 is_stmt 1 view -0
+ 420              		.cfi_startproc
+ 421              		@ args = 0, pretend = 0, frame = 8
+ 422              		@ frame_needed = 0, uses_anonymous_args = 0
+ 423 0000 10B5     		push	{r4, lr}
+ 424              	.LCFI12:
+ 425              		.cfi_def_cfa_offset 8
+ 426              		.cfi_offset 4, -8
+ 427              		.cfi_offset 14, -4
+ 428 0002 82B0     		sub	sp, sp, #8
+ 429              	.LCFI13:
+ 430              		.cfi_def_cfa_offset 16
+  97:Src/bootloader.c ****   uint16_t id;
+ 431              		.loc 1 97 3 view .LVU92
+  98:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 432              		.loc 1 98 3 view .LVU93
+  99:Src/bootloader.c ****   uint8_t rx_number_of_bytes;
+ 433              		.loc 1 99 3 view .LVU94
+ 100:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 434              		.loc 1 100 3 view .LVU95
+ 100:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 435              		.loc 1 100 11 is_stmt 0 view .LVU96
+ 436 0004 0023     		movs	r3, #0
+ 437 0006 8DF80230 		strb	r3, [sp, #2]
+ 101:Src/bootloader.c ****   uint8_t rx_buffer[2];
+ 438              		.loc 1 101 3 is_stmt 1 view .LVU97
+ 104:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 439              		.loc 1 104 3 view .LVU98
+ 104:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 440              		.loc 1 104 16 is_stmt 0 view .LVU99
+ARM GAS  /tmp/ccMvkkdN.s 			page 18
+
+
+ 441 000a 5A23     		movs	r3, #90
+ 442 000c 8DF80430 		strb	r3, [sp, #4]
+ 105:Src/bootloader.c ****   cmd_frame[1] = GET_ID_COMMAND;
+ 443              		.loc 1 105 3 is_stmt 1 view .LVU100
+ 105:Src/bootloader.c ****   cmd_frame[1] = GET_ID_COMMAND;
+ 444              		.loc 1 105 16 is_stmt 0 view .LVU101
+ 445 0010 0223     		movs	r3, #2
+ 446 0012 8DF80530 		strb	r3, [sp, #5]
+ 106:Src/bootloader.c ****   cmd_frame[2] = GET_ID_COMMAND ^ 0xFFU;
+ 447              		.loc 1 106 3 is_stmt 1 view .LVU102
+ 106:Src/bootloader.c ****   cmd_frame[2] = GET_ID_COMMAND ^ 0xFFU;
+ 448              		.loc 1 106 16 is_stmt 0 view .LVU103
+ 449 0016 FD23     		movs	r3, #253
+ 450 0018 8DF80630 		strb	r3, [sp, #6]
+ 107:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 451              		.loc 1 107 3 is_stmt 1 view .LVU104
+ 452 001c 164C     		ldr	r4, .L29
+ 453 001e 4FF47A73 		mov	r3, #1000
+ 454 0022 0322     		movs	r2, #3
+ 455 0024 01A9     		add	r1, sp, #4
+ 456 0026 2068     		ldr	r0, [r4]
+ 457 0028 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 458              	.LVL28:
+ 110:Src/bootloader.c ****   wait_for_ack();
+ 459              		.loc 1 110 3 view .LVU105
+ 460 002c FFF7FEFF 		bl	wait_for_ack
+ 461              	.LVL29:
+ 113:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U);
+ 462              		.loc 1 113 3 view .LVU106
+ 463 0030 4FF47A73 		mov	r3, #1000
+ 464 0034 0122     		movs	r2, #1
+ 465 0036 0DF10201 		add	r1, sp, #2
+ 466 003a 2068     		ldr	r0, [r4]
+ 467 003c FFF7FEFF 		bl	HAL_SPI_Transmit
+ 468              	.LVL30:
+ 114:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, &rx_number_of_bytes, 1U, 1000U);
+ 469              		.loc 1 114 3 view .LVU107
+ 470 0040 4FF47A73 		mov	r3, #1000
+ 471 0044 0122     		movs	r2, #1
+ 472 0046 0DF10301 		add	r1, sp, #3
+ 473 004a 2068     		ldr	r0, [r4]
+ 474 004c FFF7FEFF 		bl	HAL_SPI_Receive
+ 475              	.LVL31:
+ 115:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, rx_buffer, (uint16_t)rx_number_of_bytes + 1U, 1000U);
+ 476              		.loc 1 115 3 view .LVU108
+ 477 0050 9DF80320 		ldrb	r2, [sp, #3]	@ zero_extendqisi2
+ 478 0054 4FF47A73 		mov	r3, #1000
+ 479 0058 0132     		adds	r2, r2, #1
+ 480 005a 6946     		mov	r1, sp
+ 481 005c 2068     		ldr	r0, [r4]
+ 482 005e FFF7FEFF 		bl	HAL_SPI_Receive
+ 483              	.LVL32:
+ 117:Src/bootloader.c ****   id = ((uint16_t)rx_buffer[0] << 8) | (rx_buffer[1]);
+ 484              		.loc 1 117 3 view .LVU109
+ 117:Src/bootloader.c ****   id = ((uint16_t)rx_buffer[0] << 8) | (rx_buffer[1]);
+ 485              		.loc 1 117 28 is_stmt 0 view .LVU110
+ 486 0062 9DF80030 		ldrb	r3, [sp]	@ zero_extendqisi2
+ARM GAS  /tmp/ccMvkkdN.s 			page 19
+
+
+ 117:Src/bootloader.c ****   id = ((uint16_t)rx_buffer[0] << 8) | (rx_buffer[1]);
+ 487              		.loc 1 117 50 view .LVU111
+ 488 0066 9DF80140 		ldrb	r4, [sp, #1]	@ zero_extendqisi2
+ 117:Src/bootloader.c ****   id = ((uint16_t)rx_buffer[0] << 8) | (rx_buffer[1]);
+ 489              		.loc 1 117 6 view .LVU112
+ 490 006a 44EA0324 		orr	r4, r4, r3, lsl #8
+ 491              	.LVL33:
+ 120:Src/bootloader.c ****   wait_for_ack();
+ 492              		.loc 1 120 3 is_stmt 1 view .LVU113
+ 493 006e FFF7FEFF 		bl	wait_for_ack
+ 494              	.LVL34:
+ 122:Src/bootloader.c ****   return id;
+ 495              		.loc 1 122 3 view .LVU114
+ 123:Src/bootloader.c **** }
+ 496              		.loc 1 123 1 is_stmt 0 view .LVU115
+ 497 0072 2046     		mov	r0, r4
+ 498 0074 02B0     		add	sp, sp, #8
+ 499              	.LCFI14:
+ 500              		.cfi_def_cfa_offset 8
+ 501              		@ sp needed
+ 502 0076 10BD     		pop	{r4, pc}
+ 503              	.LVL35:
+ 504              	.L30:
+ 123:Src/bootloader.c **** }
+ 505              		.loc 1 123 1 view .LVU116
+ 506              		.align	2
+ 507              	.L29:
+ 508 0078 00000000 		.word	.LANCHOR0
+ 509              		.cfi_endproc
+ 510              	.LFE133:
+ 512              		.section	.text.BL_ReadMemory_Command,"ax",%progbits
+ 513              		.align	1
+ 514              		.global	BL_ReadMemory_Command
+ 515              		.syntax unified
+ 516              		.thumb
+ 517              		.thumb_func
+ 518              		.fpu fpv4-sp-d16
+ 520              	BL_ReadMemory_Command:
+ 521              	.LVL36:
+ 522              	.LFB134:
+ 133:Src/bootloader.c **** {
+ 523              		.loc 1 133 1 is_stmt 1 view -0
+ 524              		.cfi_startproc
+ 525              		@ args = 0, pretend = 0, frame = 24
+ 526              		@ frame_needed = 0, uses_anonymous_args = 0
+ 133:Src/bootloader.c **** {
+ 527              		.loc 1 133 1 is_stmt 0 view .LVU118
+ 528 0000 F0B5     		push	{r4, r5, r6, r7, lr}
+ 529              	.LCFI15:
+ 530              		.cfi_def_cfa_offset 20
+ 531              		.cfi_offset 4, -20
+ 532              		.cfi_offset 5, -16
+ 533              		.cfi_offset 6, -12
+ 534              		.cfi_offset 7, -8
+ 535              		.cfi_offset 14, -4
+ 536 0002 87B0     		sub	sp, sp, #28
+ 537              	.LCFI16:
+ARM GAS  /tmp/ccMvkkdN.s 			page 20
+
+
+ 538              		.cfi_def_cfa_offset 48
+ 539 0004 0446     		mov	r4, r0
+ 540 0006 0E46     		mov	r6, r1
+ 541 0008 1746     		mov	r7, r2
+ 134:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 542              		.loc 1 134 3 is_stmt 1 view .LVU119
+ 135:Src/bootloader.c ****   uint8_t addr_frame[5];
+ 543              		.loc 1 135 3 view .LVU120
+ 136:Src/bootloader.c ****   uint8_t nob_frame[2];
+ 544              		.loc 1 136 3 view .LVU121
+ 137:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 545              		.loc 1 137 3 view .LVU122
+ 137:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 546              		.loc 1 137 11 is_stmt 0 view .LVU123
+ 547 000a 0023     		movs	r3, #0
+ 548 000c 8DF80730 		strb	r3, [sp, #7]
+ 140:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 549              		.loc 1 140 3 is_stmt 1 view .LVU124
+ 140:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 550              		.loc 1 140 16 is_stmt 0 view .LVU125
+ 551 0010 5A23     		movs	r3, #90
+ 552 0012 8DF81430 		strb	r3, [sp, #20]
+ 141:Src/bootloader.c ****   cmd_frame[1] = RMEM_COMMAND;
+ 553              		.loc 1 141 3 is_stmt 1 view .LVU126
+ 141:Src/bootloader.c ****   cmd_frame[1] = RMEM_COMMAND;
+ 554              		.loc 1 141 16 is_stmt 0 view .LVU127
+ 555 0016 1123     		movs	r3, #17
+ 556 0018 8DF81530 		strb	r3, [sp, #21]
+ 142:Src/bootloader.c ****   cmd_frame[2] = RMEM_COMMAND ^ 0xFFU;
+ 557              		.loc 1 142 3 is_stmt 1 view .LVU128
+ 142:Src/bootloader.c ****   cmd_frame[2] = RMEM_COMMAND ^ 0xFFU;
+ 558              		.loc 1 142 16 is_stmt 0 view .LVU129
+ 559 001c EE23     		movs	r3, #238
+ 560 001e 8DF81630 		strb	r3, [sp, #22]
+ 143:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 561              		.loc 1 143 3 is_stmt 1 view .LVU130
+ 562 0022 234D     		ldr	r5, .L33
+ 563 0024 4FF47A73 		mov	r3, #1000
+ 564 0028 0322     		movs	r2, #3
+ 565              	.LVL37:
+ 143:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 566              		.loc 1 143 3 is_stmt 0 view .LVU131
+ 567 002a 05A9     		add	r1, sp, #20
+ 568              	.LVL38:
+ 143:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 569              		.loc 1 143 3 view .LVU132
+ 570 002c 2868     		ldr	r0, [r5]
+ 571              	.LVL39:
+ 143:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 572              		.loc 1 143 3 view .LVU133
+ 573 002e FFF7FEFF 		bl	HAL_SPI_Transmit
+ 574              	.LVL40:
+ 146:Src/bootloader.c ****   wait_for_ack();
+ 575              		.loc 1 146 3 is_stmt 1 view .LVU134
+ 576 0032 FFF7FEFF 		bl	wait_for_ack
+ 577              	.LVL41:
+ 149:Src/bootloader.c ****   addr_frame[0] = (uint8_t)((address >> 24) & 0xFFU);
+ARM GAS  /tmp/ccMvkkdN.s 			page 21
+
+
+ 578              		.loc 1 149 3 view .LVU135
+ 149:Src/bootloader.c ****   addr_frame[0] = (uint8_t)((address >> 24) & 0xFFU);
+ 579              		.loc 1 149 19 is_stmt 0 view .LVU136
+ 580 0036 230E     		lsrs	r3, r4, #24
+ 149:Src/bootloader.c ****   addr_frame[0] = (uint8_t)((address >> 24) & 0xFFU);
+ 581              		.loc 1 149 17 view .LVU137
+ 582 0038 8DF80C30 		strb	r3, [sp, #12]
+ 150:Src/bootloader.c ****   addr_frame[1] = (uint8_t)((address >> 16) & 0xFFU);
+ 583              		.loc 1 150 3 is_stmt 1 view .LVU138
+ 150:Src/bootloader.c ****   addr_frame[1] = (uint8_t)((address >> 16) & 0xFFU);
+ 584              		.loc 1 150 19 is_stmt 0 view .LVU139
+ 585 003c C4F30743 		ubfx	r3, r4, #16, #8
+ 150:Src/bootloader.c ****   addr_frame[1] = (uint8_t)((address >> 16) & 0xFFU);
+ 586              		.loc 1 150 17 view .LVU140
+ 587 0040 8DF80D30 		strb	r3, [sp, #13]
+ 151:Src/bootloader.c ****   addr_frame[2] = (uint8_t)((address >> 8) & 0xFFU);
+ 588              		.loc 1 151 3 is_stmt 1 view .LVU141
+ 151:Src/bootloader.c ****   addr_frame[2] = (uint8_t)((address >> 8) & 0xFFU);
+ 589              		.loc 1 151 19 is_stmt 0 view .LVU142
+ 590 0044 C4F30723 		ubfx	r3, r4, #8, #8
+ 151:Src/bootloader.c ****   addr_frame[2] = (uint8_t)((address >> 8) & 0xFFU);
+ 591              		.loc 1 151 17 view .LVU143
+ 592 0048 8DF80E30 		strb	r3, [sp, #14]
+ 152:Src/bootloader.c ****   addr_frame[3] = (uint8_t)(address & 0xFFU);
+ 593              		.loc 1 152 3 is_stmt 1 view .LVU144
+ 152:Src/bootloader.c ****   addr_frame[3] = (uint8_t)(address & 0xFFU);
+ 594              		.loc 1 152 17 is_stmt 0 view .LVU145
+ 595 004c 8DF80F40 		strb	r4, [sp, #15]
+ 153:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 596              		.loc 1 153 3 is_stmt 1 view .LVU146
+ 153:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 597              		.loc 1 153 19 is_stmt 0 view .LVU147
+ 598 0050 0421     		movs	r1, #4
+ 599 0052 03A8     		add	r0, sp, #12
+ 600 0054 FFF7FEFF 		bl	xor_checksum
+ 601              	.LVL42:
+ 153:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 602              		.loc 1 153 17 view .LVU148
+ 603 0058 8DF81000 		strb	r0, [sp, #16]
+ 154:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, addr_frame, 5U, 1000U);
+ 604              		.loc 1 154 3 is_stmt 1 view .LVU149
+ 605 005c 4FF47A73 		mov	r3, #1000
+ 606 0060 0522     		movs	r2, #5
+ 607 0062 03A9     		add	r1, sp, #12
+ 608 0064 2868     		ldr	r0, [r5]
+ 609 0066 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 610              	.LVL43:
+ 157:Src/bootloader.c ****   wait_for_ack();
+ 611              		.loc 1 157 3 view .LVU150
+ 612 006a FFF7FEFF 		bl	wait_for_ack
+ 613              	.LVL44:
+ 160:Src/bootloader.c ****   nob_frame[0] = (nob - 1U);
+ 614              		.loc 1 160 3 view .LVU151
+ 160:Src/bootloader.c ****   nob_frame[0] = (nob - 1U);
+ 615              		.loc 1 160 23 is_stmt 0 view .LVU152
+ 616 006e 731E     		subs	r3, r6, #1
+ 160:Src/bootloader.c ****   nob_frame[0] = (nob - 1U);
+ARM GAS  /tmp/ccMvkkdN.s 			page 22
+
+
+ 617              		.loc 1 160 16 view .LVU153
+ 618 0070 8DF80830 		strb	r3, [sp, #8]
+ 161:Src/bootloader.c ****   nob_frame[1] = (nob - 1U) ^ 0xFFU;
+ 619              		.loc 1 161 3 is_stmt 1 view .LVU154
+ 161:Src/bootloader.c ****   nob_frame[1] = (nob - 1U) ^ 0xFFU;
+ 620              		.loc 1 161 29 is_stmt 0 view .LVU155
+ 621 0074 7342     		rsbs	r3, r6, #0
+ 161:Src/bootloader.c ****   nob_frame[1] = (nob - 1U) ^ 0xFFU;
+ 622              		.loc 1 161 16 view .LVU156
+ 623 0076 8DF80930 		strb	r3, [sp, #9]
+ 162:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, nob_frame, 2U, 1000U);
+ 624              		.loc 1 162 3 is_stmt 1 view .LVU157
+ 625 007a 4FF47A73 		mov	r3, #1000
+ 626 007e 0222     		movs	r2, #2
+ 627 0080 02A9     		add	r1, sp, #8
+ 628 0082 2868     		ldr	r0, [r5]
+ 629 0084 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 630              	.LVL45:
+ 165:Src/bootloader.c ****   wait_for_ack();
+ 631              		.loc 1 165 3 view .LVU158
+ 632 0088 FFF7FEFF 		bl	wait_for_ack
+ 633              	.LVL46:
+ 168:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U);
+ 634              		.loc 1 168 3 view .LVU159
+ 635 008c 4FF47A73 		mov	r3, #1000
+ 636 0090 0122     		movs	r2, #1
+ 637 0092 0DF10701 		add	r1, sp, #7
+ 638 0096 2868     		ldr	r0, [r5]
+ 639 0098 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 640              	.LVL47:
+ 169:Src/bootloader.c ****   HAL_SPI_Receive(SpiHandle, pData, (uint16_t)nob, 1000U);
+ 641              		.loc 1 169 3 view .LVU160
+ 642 009c 4FF47A73 		mov	r3, #1000
+ 643 00a0 3246     		mov	r2, r6
+ 644 00a2 3946     		mov	r1, r7
+ 645 00a4 2868     		ldr	r0, [r5]
+ 646 00a6 FFF7FEFF 		bl	HAL_SPI_Receive
+ 647              	.LVL48:
+ 170:Src/bootloader.c **** }
+ 648              		.loc 1 170 1 is_stmt 0 view .LVU161
+ 649 00aa 07B0     		add	sp, sp, #28
+ 650              	.LCFI17:
+ 651              		.cfi_def_cfa_offset 20
+ 652              		@ sp needed
+ 653 00ac F0BD     		pop	{r4, r5, r6, r7, pc}
+ 654              	.LVL49:
+ 655              	.L34:
+ 170:Src/bootloader.c **** }
+ 656              		.loc 1 170 1 view .LVU162
+ 657 00ae 00BF     		.align	2
+ 658              	.L33:
+ 659 00b0 00000000 		.word	.LANCHOR0
+ 660              		.cfi_endproc
+ 661              	.LFE134:
+ 663              		.section	.text.BL_Go_Command,"ax",%progbits
+ 664              		.align	1
+ 665              		.global	BL_Go_Command
+ARM GAS  /tmp/ccMvkkdN.s 			page 23
+
+
+ 666              		.syntax unified
+ 667              		.thumb
+ 668              		.thumb_func
+ 669              		.fpu fpv4-sp-d16
+ 671              	BL_Go_Command:
+ 672              	.LVL50:
+ 673              	.LFB135:
+ 179:Src/bootloader.c **** {
+ 674              		.loc 1 179 1 is_stmt 1 view -0
+ 675              		.cfi_startproc
+ 676              		@ args = 0, pretend = 0, frame = 16
+ 677              		@ frame_needed = 0, uses_anonymous_args = 0
+ 179:Src/bootloader.c **** {
+ 678              		.loc 1 179 1 is_stmt 0 view .LVU164
+ 679 0000 30B5     		push	{r4, r5, lr}
+ 680              	.LCFI18:
+ 681              		.cfi_def_cfa_offset 12
+ 682              		.cfi_offset 4, -12
+ 683              		.cfi_offset 5, -8
+ 684              		.cfi_offset 14, -4
+ 685 0002 85B0     		sub	sp, sp, #20
+ 686              	.LCFI19:
+ 687              		.cfi_def_cfa_offset 32
+ 688 0004 0446     		mov	r4, r0
+ 180:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 689              		.loc 1 180 3 is_stmt 1 view .LVU165
+ 181:Src/bootloader.c ****   uint8_t addr_frame[5];
+ 690              		.loc 1 181 3 view .LVU166
+ 184:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 691              		.loc 1 184 3 view .LVU167
+ 184:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 692              		.loc 1 184 16 is_stmt 0 view .LVU168
+ 693 0006 5A23     		movs	r3, #90
+ 694 0008 8DF80C30 		strb	r3, [sp, #12]
+ 185:Src/bootloader.c ****   cmd_frame[1] = GO_COMMAND;
+ 695              		.loc 1 185 3 is_stmt 1 view .LVU169
+ 185:Src/bootloader.c ****   cmd_frame[1] = GO_COMMAND;
+ 696              		.loc 1 185 16 is_stmt 0 view .LVU170
+ 697 000c 2123     		movs	r3, #33
+ 698 000e 8DF80D30 		strb	r3, [sp, #13]
+ 186:Src/bootloader.c ****   cmd_frame[2] = GO_COMMAND ^ 0xFFU;
+ 699              		.loc 1 186 3 is_stmt 1 view .LVU171
+ 186:Src/bootloader.c ****   cmd_frame[2] = GO_COMMAND ^ 0xFFU;
+ 700              		.loc 1 186 16 is_stmt 0 view .LVU172
+ 701 0012 DE23     		movs	r3, #222
+ 702 0014 8DF80E30 		strb	r3, [sp, #14]
+ 187:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 703              		.loc 1 187 3 is_stmt 1 view .LVU173
+ 704 0018 144D     		ldr	r5, .L37
+ 705 001a 4FF47A73 		mov	r3, #1000
+ 706 001e 0322     		movs	r2, #3
+ 707 0020 03A9     		add	r1, sp, #12
+ 708 0022 2868     		ldr	r0, [r5]
+ 709              	.LVL51:
+ 187:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 710              		.loc 1 187 3 is_stmt 0 view .LVU174
+ 711 0024 FFF7FEFF 		bl	HAL_SPI_Transmit
+ARM GAS  /tmp/ccMvkkdN.s 			page 24
+
+
+ 712              	.LVL52:
+ 190:Src/bootloader.c ****   wait_for_ack();
+ 713              		.loc 1 190 3 is_stmt 1 view .LVU175
+ 714 0028 FFF7FEFF 		bl	wait_for_ack
+ 715              	.LVL53:
+ 193:Src/bootloader.c ****   addr_frame[0] = ((uint8_t)(address >> 24) & 0xFFU);
+ 716              		.loc 1 193 3 view .LVU176
+ 193:Src/bootloader.c ****   addr_frame[0] = ((uint8_t)(address >> 24) & 0xFFU);
+ 717              		.loc 1 193 20 is_stmt 0 view .LVU177
+ 718 002c 230E     		lsrs	r3, r4, #24
+ 193:Src/bootloader.c ****   addr_frame[0] = ((uint8_t)(address >> 24) & 0xFFU);
+ 719              		.loc 1 193 17 view .LVU178
+ 720 002e 8DF80430 		strb	r3, [sp, #4]
+ 194:Src/bootloader.c ****   addr_frame[1] = ((uint8_t)(address >> 16) & 0xFFU);
+ 721              		.loc 1 194 3 is_stmt 1 view .LVU179
+ 194:Src/bootloader.c ****   addr_frame[1] = ((uint8_t)(address >> 16) & 0xFFU);
+ 722              		.loc 1 194 20 is_stmt 0 view .LVU180
+ 723 0032 C4F30743 		ubfx	r3, r4, #16, #8
+ 194:Src/bootloader.c ****   addr_frame[1] = ((uint8_t)(address >> 16) & 0xFFU);
+ 724              		.loc 1 194 17 view .LVU181
+ 725 0036 8DF80530 		strb	r3, [sp, #5]
+ 195:Src/bootloader.c ****   addr_frame[2] = ((uint8_t)(address >> 8) & 0xFFU);
+ 726              		.loc 1 195 3 is_stmt 1 view .LVU182
+ 195:Src/bootloader.c ****   addr_frame[2] = ((uint8_t)(address >> 8) & 0xFFU);
+ 727              		.loc 1 195 20 is_stmt 0 view .LVU183
+ 728 003a C4F30723 		ubfx	r3, r4, #8, #8
+ 195:Src/bootloader.c ****   addr_frame[2] = ((uint8_t)(address >> 8) & 0xFFU);
+ 729              		.loc 1 195 17 view .LVU184
+ 730 003e 8DF80630 		strb	r3, [sp, #6]
+ 196:Src/bootloader.c ****   addr_frame[3] = ((uint8_t)address & 0xFFU);
+ 731              		.loc 1 196 3 is_stmt 1 view .LVU185
+ 196:Src/bootloader.c ****   addr_frame[3] = ((uint8_t)address & 0xFFU);
+ 732              		.loc 1 196 17 is_stmt 0 view .LVU186
+ 733 0042 8DF80740 		strb	r4, [sp, #7]
+ 197:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 734              		.loc 1 197 3 is_stmt 1 view .LVU187
+ 197:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 735              		.loc 1 197 19 is_stmt 0 view .LVU188
+ 736 0046 0421     		movs	r1, #4
+ 737 0048 0DEB0100 		add	r0, sp, r1
+ 738 004c FFF7FEFF 		bl	xor_checksum
+ 739              	.LVL54:
+ 197:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 740              		.loc 1 197 17 view .LVU189
+ 741 0050 8DF80800 		strb	r0, [sp, #8]
+ 198:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, addr_frame, 5U, 1000U);
+ 742              		.loc 1 198 3 is_stmt 1 view .LVU190
+ 743 0054 4FF47A73 		mov	r3, #1000
+ 744 0058 0522     		movs	r2, #5
+ 745 005a 01A9     		add	r1, sp, #4
+ 746 005c 2868     		ldr	r0, [r5]
+ 747 005e FFF7FEFF 		bl	HAL_SPI_Transmit
+ 748              	.LVL55:
+ 201:Src/bootloader.c ****   wait_for_ack();
+ 749              		.loc 1 201 3 view .LVU191
+ 750 0062 FFF7FEFF 		bl	wait_for_ack
+ 751              	.LVL56:
+ARM GAS  /tmp/ccMvkkdN.s 			page 25
+
+
+ 202:Src/bootloader.c **** }
+ 752              		.loc 1 202 1 is_stmt 0 view .LVU192
+ 753 0066 05B0     		add	sp, sp, #20
+ 754              	.LCFI20:
+ 755              		.cfi_def_cfa_offset 12
+ 756              		@ sp needed
+ 757 0068 30BD     		pop	{r4, r5, pc}
+ 758              	.LVL57:
+ 759              	.L38:
+ 202:Src/bootloader.c **** }
+ 760              		.loc 1 202 1 view .LVU193
+ 761 006a 00BF     		.align	2
+ 762              	.L37:
+ 763 006c 00000000 		.word	.LANCHOR0
+ 764              		.cfi_endproc
+ 765              	.LFE135:
+ 767              		.section	.text.BL_WriteMemory_Command,"ax",%progbits
+ 768              		.align	1
+ 769              		.global	BL_WriteMemory_Command
+ 770              		.syntax unified
+ 771              		.thumb
+ 772              		.thumb_func
+ 773              		.fpu fpv4-sp-d16
+ 775              	BL_WriteMemory_Command:
+ 776              	.LVL58:
+ 777              	.LFB136:
+ 212:Src/bootloader.c **** {
+ 778              		.loc 1 212 1 is_stmt 1 view -0
+ 779              		.cfi_startproc
+ 780              		@ args = 0, pretend = 0, frame = 16
+ 781              		@ frame_needed = 0, uses_anonymous_args = 0
+ 212:Src/bootloader.c **** {
+ 782              		.loc 1 212 1 is_stmt 0 view .LVU195
+ 783 0000 F0B5     		push	{r4, r5, r6, r7, lr}
+ 784              	.LCFI21:
+ 785              		.cfi_def_cfa_offset 20
+ 786              		.cfi_offset 4, -20
+ 787              		.cfi_offset 5, -16
+ 788              		.cfi_offset 6, -12
+ 789              		.cfi_offset 7, -8
+ 790              		.cfi_offset 14, -4
+ 791 0002 85B0     		sub	sp, sp, #20
+ 792              	.LCFI22:
+ 793              		.cfi_def_cfa_offset 40
+ 794 0004 0446     		mov	r4, r0
+ 795 0006 0F46     		mov	r7, r1
+ 796 0008 1646     		mov	r6, r2
+ 213:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 797              		.loc 1 213 3 is_stmt 1 view .LVU196
+ 214:Src/bootloader.c ****   uint8_t addr_frame[5];
+ 798              		.loc 1 214 3 view .LVU197
+ 215:Src/bootloader.c ****   uint8_t n = nob - 1U;
+ 799              		.loc 1 215 3 view .LVU198
+ 215:Src/bootloader.c ****   uint8_t n = nob - 1U;
+ 800              		.loc 1 215 19 is_stmt 0 view .LVU199
+ 801 000a 4D1E     		subs	r5, r1, #1
+ 802 000c EDB2     		uxtb	r5, r5
+ARM GAS  /tmp/ccMvkkdN.s 			page 26
+
+
+ 215:Src/bootloader.c ****   uint8_t n = nob - 1U;
+ 803              		.loc 1 215 11 view .LVU200
+ 804 000e 8DF80350 		strb	r5, [sp, #3]
+ 216:Src/bootloader.c ****   uint8_t checksum = xor_checksum(pData, nob) ^ n;
+ 805              		.loc 1 216 3 is_stmt 1 view .LVU201
+ 216:Src/bootloader.c ****   uint8_t checksum = xor_checksum(pData, nob) ^ n;
+ 806              		.loc 1 216 22 is_stmt 0 view .LVU202
+ 807 0012 1046     		mov	r0, r2
+ 808              	.LVL59:
+ 216:Src/bootloader.c ****   uint8_t checksum = xor_checksum(pData, nob) ^ n;
+ 809              		.loc 1 216 22 view .LVU203
+ 810 0014 FFF7FEFF 		bl	xor_checksum
+ 811              	.LVL60:
+ 216:Src/bootloader.c ****   uint8_t checksum = xor_checksum(pData, nob) ^ n;
+ 812              		.loc 1 216 11 view .LVU204
+ 813 0018 4540     		eors	r5, r5, r0
+ 814 001a 8DF80250 		strb	r5, [sp, #2]
+ 219:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 815              		.loc 1 219 3 is_stmt 1 view .LVU205
+ 219:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 816              		.loc 1 219 16 is_stmt 0 view .LVU206
+ 817 001e 5A23     		movs	r3, #90
+ 818 0020 8DF80C30 		strb	r3, [sp, #12]
+ 220:Src/bootloader.c ****   cmd_frame[1] = WMEM_COMMAND;
+ 819              		.loc 1 220 3 is_stmt 1 view .LVU207
+ 220:Src/bootloader.c ****   cmd_frame[1] = WMEM_COMMAND;
+ 820              		.loc 1 220 16 is_stmt 0 view .LVU208
+ 821 0024 3123     		movs	r3, #49
+ 822 0026 8DF80D30 		strb	r3, [sp, #13]
+ 221:Src/bootloader.c ****   cmd_frame[2] = WMEM_COMMAND ^ 0xFFU;
+ 823              		.loc 1 221 3 is_stmt 1 view .LVU209
+ 221:Src/bootloader.c ****   cmd_frame[2] = WMEM_COMMAND ^ 0xFFU;
+ 824              		.loc 1 221 16 is_stmt 0 view .LVU210
+ 825 002a CE23     		movs	r3, #206
+ 826 002c 8DF80E30 		strb	r3, [sp, #14]
+ 222:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 827              		.loc 1 222 3 is_stmt 1 view .LVU211
+ 828 0030 204D     		ldr	r5, .L41
+ 829 0032 4FF47A73 		mov	r3, #1000
+ 830 0036 0322     		movs	r2, #3
+ 831 0038 03A9     		add	r1, sp, #12
+ 832 003a 2868     		ldr	r0, [r5]
+ 833 003c FFF7FEFF 		bl	HAL_SPI_Transmit
+ 834              	.LVL61:
+ 225:Src/bootloader.c ****   wait_for_ack();
+ 835              		.loc 1 225 3 view .LVU212
+ 836 0040 FFF7FEFF 		bl	wait_for_ack
+ 837              	.LVL62:
+ 228:Src/bootloader.c ****   addr_frame[0] = ((uint8_t)(address >> 24) & 0xFFU);
+ 838              		.loc 1 228 3 view .LVU213
+ 228:Src/bootloader.c ****   addr_frame[0] = ((uint8_t)(address >> 24) & 0xFFU);
+ 839              		.loc 1 228 20 is_stmt 0 view .LVU214
+ 840 0044 230E     		lsrs	r3, r4, #24
+ 228:Src/bootloader.c ****   addr_frame[0] = ((uint8_t)(address >> 24) & 0xFFU);
+ 841              		.loc 1 228 17 view .LVU215
+ 842 0046 8DF80430 		strb	r3, [sp, #4]
+ 229:Src/bootloader.c ****   addr_frame[1] = ((uint8_t)(address >> 16) & 0xFFU);
+ARM GAS  /tmp/ccMvkkdN.s 			page 27
+
+
+ 843              		.loc 1 229 3 is_stmt 1 view .LVU216
+ 229:Src/bootloader.c ****   addr_frame[1] = ((uint8_t)(address >> 16) & 0xFFU);
+ 844              		.loc 1 229 20 is_stmt 0 view .LVU217
+ 845 004a C4F30743 		ubfx	r3, r4, #16, #8
+ 229:Src/bootloader.c ****   addr_frame[1] = ((uint8_t)(address >> 16) & 0xFFU);
+ 846              		.loc 1 229 17 view .LVU218
+ 847 004e 8DF80530 		strb	r3, [sp, #5]
+ 230:Src/bootloader.c ****   addr_frame[2] = ((uint8_t)(address >> 8) & 0xFFU);
+ 848              		.loc 1 230 3 is_stmt 1 view .LVU219
+ 230:Src/bootloader.c ****   addr_frame[2] = ((uint8_t)(address >> 8) & 0xFFU);
+ 849              		.loc 1 230 20 is_stmt 0 view .LVU220
+ 850 0052 C4F30723 		ubfx	r3, r4, #8, #8
+ 230:Src/bootloader.c ****   addr_frame[2] = ((uint8_t)(address >> 8) & 0xFFU);
+ 851              		.loc 1 230 17 view .LVU221
+ 852 0056 8DF80630 		strb	r3, [sp, #6]
+ 231:Src/bootloader.c ****   addr_frame[3] = ((uint8_t)address & 0xFFU);
+ 853              		.loc 1 231 3 is_stmt 1 view .LVU222
+ 231:Src/bootloader.c ****   addr_frame[3] = ((uint8_t)address & 0xFFU);
+ 854              		.loc 1 231 17 is_stmt 0 view .LVU223
+ 855 005a 8DF80740 		strb	r4, [sp, #7]
+ 232:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 856              		.loc 1 232 3 is_stmt 1 view .LVU224
+ 232:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 857              		.loc 1 232 19 is_stmt 0 view .LVU225
+ 858 005e 0421     		movs	r1, #4
+ 859 0060 0DEB0100 		add	r0, sp, r1
+ 860 0064 FFF7FEFF 		bl	xor_checksum
+ 861              	.LVL63:
+ 232:Src/bootloader.c ****   addr_frame[4] = xor_checksum(addr_frame, 4U);
+ 862              		.loc 1 232 17 view .LVU226
+ 863 0068 8DF80800 		strb	r0, [sp, #8]
+ 233:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, addr_frame, 5U, 1000U);
+ 864              		.loc 1 233 3 is_stmt 1 view .LVU227
+ 865 006c 4FF47A73 		mov	r3, #1000
+ 866 0070 0522     		movs	r2, #5
+ 867 0072 01A9     		add	r1, sp, #4
+ 868 0074 2868     		ldr	r0, [r5]
+ 869 0076 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 870              	.LVL64:
+ 236:Src/bootloader.c ****   wait_for_ack();
+ 871              		.loc 1 236 3 view .LVU228
+ 872 007a FFF7FEFF 		bl	wait_for_ack
+ 873              	.LVL65:
+ 240:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &n, 1U, 1000U);
+ 874              		.loc 1 240 3 view .LVU229
+ 875 007e 4FF47A73 		mov	r3, #1000
+ 876 0082 0122     		movs	r2, #1
+ 877 0084 0DF10301 		add	r1, sp, #3
+ 878 0088 2868     		ldr	r0, [r5]
+ 879 008a FFF7FEFF 		bl	HAL_SPI_Transmit
+ 880              	.LVL66:
+ 241:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, pData, (uint16_t)nob, 1000U);
+ 881              		.loc 1 241 3 view .LVU230
+ 882 008e 4FF47A73 		mov	r3, #1000
+ 883 0092 3A46     		mov	r2, r7
+ 884 0094 3146     		mov	r1, r6
+ 885 0096 2868     		ldr	r0, [r5]
+ARM GAS  /tmp/ccMvkkdN.s 			page 28
+
+
+ 886 0098 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 887              	.LVL67:
+ 242:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &checksum, 1U, 1000U);
+ 888              		.loc 1 242 3 view .LVU231
+ 889 009c 4FF47A73 		mov	r3, #1000
+ 890 00a0 0122     		movs	r2, #1
+ 891 00a2 0DF10201 		add	r1, sp, #2
+ 892 00a6 2868     		ldr	r0, [r5]
+ 893 00a8 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 894              	.LVL68:
+ 245:Src/bootloader.c ****   wait_for_ack();
+ 895              		.loc 1 245 3 view .LVU232
+ 896 00ac FFF7FEFF 		bl	wait_for_ack
+ 897              	.LVL69:
+ 246:Src/bootloader.c **** }
+ 898              		.loc 1 246 1 is_stmt 0 view .LVU233
+ 899 00b0 05B0     		add	sp, sp, #20
+ 900              	.LCFI23:
+ 901              		.cfi_def_cfa_offset 20
+ 902              		@ sp needed
+ 903 00b2 F0BD     		pop	{r4, r5, r6, r7, pc}
+ 904              	.LVL70:
+ 905              	.L42:
+ 246:Src/bootloader.c **** }
+ 906              		.loc 1 246 1 view .LVU234
+ 907              		.align	2
+ 908              	.L41:
+ 909 00b4 00000000 		.word	.LANCHOR0
+ 910              		.cfi_endproc
+ 911              	.LFE136:
+ 913              		.section	.text.BL_EraseMemory_Command,"ax",%progbits
+ 914              		.align	1
+ 915              		.global	BL_EraseMemory_Command
+ 916              		.syntax unified
+ 917              		.thumb
+ 918              		.thumb_func
+ 919              		.fpu fpv4-sp-d16
+ 921              	BL_EraseMemory_Command:
+ 922              	.LVL71:
+ 923              	.LFB137:
+ 260:Src/bootloader.c **** {
+ 924              		.loc 1 260 1 is_stmt 1 view -0
+ 925              		.cfi_startproc
+ 926              		@ args = 0, pretend = 0, frame = 8
+ 927              		@ frame_needed = 0, uses_anonymous_args = 0
+ 260:Src/bootloader.c **** {
+ 928              		.loc 1 260 1 is_stmt 0 view .LVU236
+ 929 0000 70B5     		push	{r4, r5, r6, lr}
+ 930              	.LCFI24:
+ 931              		.cfi_def_cfa_offset 16
+ 932              		.cfi_offset 4, -16
+ 933              		.cfi_offset 5, -12
+ 934              		.cfi_offset 6, -8
+ 935              		.cfi_offset 14, -4
+ 936 0002 82B0     		sub	sp, sp, #8
+ 937              	.LCFI25:
+ 938              		.cfi_def_cfa_offset 24
+ARM GAS  /tmp/ccMvkkdN.s 			page 29
+
+
+ 939 0004 0446     		mov	r4, r0
+ 940 0006 0D46     		mov	r5, r1
+ 261:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 941              		.loc 1 261 3 is_stmt 1 view .LVU237
+ 262:Src/bootloader.c ****   uint8_t data_frame[3];
+ 942              		.loc 1 262 3 view .LVU238
+ 265:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 943              		.loc 1 265 3 view .LVU239
+ 265:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 944              		.loc 1 265 16 is_stmt 0 view .LVU240
+ 945 0008 5A23     		movs	r3, #90
+ 946 000a 8DF80430 		strb	r3, [sp, #4]
+ 266:Src/bootloader.c ****   cmd_frame[1] = EMEM_COMMAND;
+ 947              		.loc 1 266 3 is_stmt 1 view .LVU241
+ 266:Src/bootloader.c ****   cmd_frame[1] = EMEM_COMMAND;
+ 948              		.loc 1 266 16 is_stmt 0 view .LVU242
+ 949 000e 4423     		movs	r3, #68
+ 950 0010 8DF80530 		strb	r3, [sp, #5]
+ 267:Src/bootloader.c ****   cmd_frame[2] = EMEM_COMMAND ^ 0xFFU;
+ 951              		.loc 1 267 3 is_stmt 1 view .LVU243
+ 267:Src/bootloader.c ****   cmd_frame[2] = EMEM_COMMAND ^ 0xFFU;
+ 952              		.loc 1 267 16 is_stmt 0 view .LVU244
+ 953 0014 BB23     		movs	r3, #187
+ 954 0016 8DF80630 		strb	r3, [sp, #6]
+ 268:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 955              		.loc 1 268 3 is_stmt 1 view .LVU245
+ 956 001a 1A4E     		ldr	r6, .L47
+ 957 001c 4FF47A73 		mov	r3, #1000
+ 958 0020 0322     		movs	r2, #3
+ 959 0022 01A9     		add	r1, sp, #4
+ 960              	.LVL72:
+ 268:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 961              		.loc 1 268 3 is_stmt 0 view .LVU246
+ 962 0024 3068     		ldr	r0, [r6]
+ 963              	.LVL73:
+ 268:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 964              		.loc 1 268 3 view .LVU247
+ 965 0026 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 966              	.LVL74:
+ 271:Src/bootloader.c ****   wait_for_ack();
+ 967              		.loc 1 271 3 is_stmt 1 view .LVU248
+ 968 002a FFF7FEFF 		bl	wait_for_ack
+ 969              	.LVL75:
+ 275:Src/bootloader.c ****   data_frame[0] = (uint8_t)(nb >> 8) & 0xFFU;
+ 970              		.loc 1 275 3 view .LVU249
+ 275:Src/bootloader.c ****   data_frame[0] = (uint8_t)(nb >> 8) & 0xFFU;
+ 971              		.loc 1 275 19 is_stmt 0 view .LVU250
+ 972 002e 230A     		lsrs	r3, r4, #8
+ 275:Src/bootloader.c ****   data_frame[0] = (uint8_t)(nb >> 8) & 0xFFU;
+ 973              		.loc 1 275 17 view .LVU251
+ 974 0030 8DF80030 		strb	r3, [sp]
+ 276:Src/bootloader.c ****   data_frame[1] = (uint8_t)nb & 0xFFU;
+ 975              		.loc 1 276 3 is_stmt 1 view .LVU252
+ 276:Src/bootloader.c ****   data_frame[1] = (uint8_t)nb & 0xFFU;
+ 976              		.loc 1 276 19 is_stmt 0 view .LVU253
+ 977 0034 E2B2     		uxtb	r2, r4
+ 276:Src/bootloader.c ****   data_frame[1] = (uint8_t)nb & 0xFFU;
+ARM GAS  /tmp/ccMvkkdN.s 			page 30
+
+
+ 978              		.loc 1 276 17 view .LVU254
+ 979 0036 8DF80120 		strb	r2, [sp, #1]
+ 277:Src/bootloader.c ****   data_frame[2] = data_frame[0] ^ data_frame[1];
+ 980              		.loc 1 277 3 is_stmt 1 view .LVU255
+ 277:Src/bootloader.c ****   data_frame[2] = data_frame[0] ^ data_frame[1];
+ 981              		.loc 1 277 17 is_stmt 0 view .LVU256
+ 982 003a 5340     		eors	r3, r3, r2
+ 983 003c 8DF80230 		strb	r3, [sp, #2]
+ 278:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, data_frame, 3U, 1000U);
+ 984              		.loc 1 278 3 is_stmt 1 view .LVU257
+ 985 0040 4FF47A73 		mov	r3, #1000
+ 986 0044 0322     		movs	r2, #3
+ 987 0046 6946     		mov	r1, sp
+ 988 0048 3068     		ldr	r0, [r6]
+ 989 004a FFF7FEFF 		bl	HAL_SPI_Transmit
+ 990              	.LVL76:
+ 281:Src/bootloader.c ****   wait_for_ack();
+ 991              		.loc 1 281 3 view .LVU258
+ 992 004e FFF7FEFF 		bl	wait_for_ack
+ 993              	.LVL77:
+ 284:Src/bootloader.c ****   if ((nb >> 4) != 0xFFF)
+ 994              		.loc 1 284 3 view .LVU259
+ 284:Src/bootloader.c ****   if ((nb >> 4) != 0xFFF)
+ 995              		.loc 1 284 6 is_stmt 0 view .LVU260
+ 996 0052 40F6FF73 		movw	r3, #4095
+ 997 0056 B3EB141F 		cmp	r3, r4, lsr #4
+ 998 005a 01D1     		bne	.L46
+ 999              	.L43:
+ 294:Src/bootloader.c **** }
+ 1000              		.loc 1 294 1 view .LVU261
+ 1001 005c 02B0     		add	sp, sp, #8
+ 1002              	.LCFI26:
+ 1003              		.cfi_remember_state
+ 1004              		.cfi_def_cfa_offset 16
+ 1005              		@ sp needed
+ 1006 005e 70BD     		pop	{r4, r5, r6, pc}
+ 1007              	.L46:
+ 1008              	.LCFI27:
+ 1009              		.cfi_restore_state
+ 286:Src/bootloader.c ****     data_frame[0] = (uint8_t)(code >> 8) & 0xFFU;
+ 1010              		.loc 1 286 5 is_stmt 1 view .LVU262
+ 286:Src/bootloader.c ****     data_frame[0] = (uint8_t)(code >> 8) & 0xFFU;
+ 1011              		.loc 1 286 21 is_stmt 0 view .LVU263
+ 1012 0060 0021     		movs	r1, #0
+ 286:Src/bootloader.c ****     data_frame[0] = (uint8_t)(code >> 8) & 0xFFU;
+ 1013              		.loc 1 286 19 view .LVU264
+ 1014 0062 8DF80010 		strb	r1, [sp]
+ 287:Src/bootloader.c ****     data_frame[1] = code & 0xFFU;
+ 1015              		.loc 1 287 5 is_stmt 1 view .LVU265
+ 287:Src/bootloader.c ****     data_frame[1] = code & 0xFFU;
+ 1016              		.loc 1 287 19 is_stmt 0 view .LVU266
+ 1017 0066 8DF80150 		strb	r5, [sp, #1]
+ 288:Src/bootloader.c ****     data_frame[2] = data_frame[0] ^ data_frame[1];
+ 1018              		.loc 1 288 5 is_stmt 1 view .LVU267
+ 288:Src/bootloader.c ****     data_frame[2] = data_frame[0] ^ data_frame[1];
+ 1019              		.loc 1 288 19 is_stmt 0 view .LVU268
+ 1020 006a 6940     		eors	r1, r1, r5
+ARM GAS  /tmp/ccMvkkdN.s 			page 31
+
+
+ 1021 006c 8DF80210 		strb	r1, [sp, #2]
+ 289:Src/bootloader.c ****     HAL_SPI_Transmit(SpiHandle, data_frame, 3U, 1000U);
+ 1022              		.loc 1 289 5 is_stmt 1 view .LVU269
+ 1023 0070 4FF47A73 		mov	r3, #1000
+ 1024 0074 0322     		movs	r2, #3
+ 1025 0076 6946     		mov	r1, sp
+ 1026 0078 3068     		ldr	r0, [r6]
+ 1027 007a FFF7FEFF 		bl	HAL_SPI_Transmit
+ 1028              	.LVL78:
+ 292:Src/bootloader.c ****     wait_for_ack();
+ 1029              		.loc 1 292 5 view .LVU270
+ 1030 007e FFF7FEFF 		bl	wait_for_ack
+ 1031              	.LVL79:
+ 294:Src/bootloader.c **** }
+ 1032              		.loc 1 294 1 is_stmt 0 view .LVU271
+ 1033 0082 EBE7     		b	.L43
+ 1034              	.L48:
+ 1035              		.align	2
+ 1036              	.L47:
+ 1037 0084 00000000 		.word	.LANCHOR0
+ 1038              		.cfi_endproc
+ 1039              	.LFE137:
+ 1041              		.section	.text.BL_WriteProtect_Command,"ax",%progbits
+ 1042              		.align	1
+ 1043              		.global	BL_WriteProtect_Command
+ 1044              		.syntax unified
+ 1045              		.thumb
+ 1046              		.thumb_func
+ 1047              		.fpu fpv4-sp-d16
+ 1049              	BL_WriteProtect_Command:
+ 1050              	.LVL80:
+ 1051              	.LFB138:
+ 303:Src/bootloader.c **** {
+ 1052              		.loc 1 303 1 is_stmt 1 view -0
+ 1053              		.cfi_startproc
+ 1054              		@ args = 0, pretend = 0, frame = 16
+ 1055              		@ frame_needed = 0, uses_anonymous_args = 0
+ 303:Src/bootloader.c **** {
+ 1056              		.loc 1 303 1 is_stmt 0 view .LVU273
+ 1057 0000 F0B5     		push	{r4, r5, r6, r7, lr}
+ 1058              	.LCFI28:
+ 1059              		.cfi_def_cfa_offset 20
+ 1060              		.cfi_offset 4, -20
+ 1061              		.cfi_offset 5, -16
+ 1062              		.cfi_offset 6, -12
+ 1063              		.cfi_offset 7, -8
+ 1064              		.cfi_offset 14, -4
+ 1065 0002 85B0     		sub	sp, sp, #20
+ 1066              	.LCFI29:
+ 1067              		.cfi_def_cfa_offset 40
+ 1068 0004 0446     		mov	r4, r0
+ 1069 0006 0E46     		mov	r6, r1
+ 304:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 1070              		.loc 1 304 3 is_stmt 1 view .LVU274
+ 305:Src/bootloader.c ****   uint8_t data_frame[3];
+ 1071              		.loc 1 305 3 view .LVU275
+ 306:Src/bootloader.c ****   uint8_t n = nb - 1U;
+ARM GAS  /tmp/ccMvkkdN.s 			page 32
+
+
+ 1072              		.loc 1 306 3 view .LVU276
+ 306:Src/bootloader.c ****   uint8_t n = nb - 1U;
+ 1073              		.loc 1 306 11 is_stmt 0 view .LVU277
+ 1074 0008 471E     		subs	r7, r0, #1
+ 1075 000a FFB2     		uxtb	r7, r7
+ 1076              	.LVL81:
+ 307:Src/bootloader.c ****   uint8_t checksum;
+ 1077              		.loc 1 307 3 is_stmt 1 view .LVU278
+ 310:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 1078              		.loc 1 310 3 view .LVU279
+ 310:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 1079              		.loc 1 310 16 is_stmt 0 view .LVU280
+ 1080 000c 5A23     		movs	r3, #90
+ 1081 000e 8DF80C30 		strb	r3, [sp, #12]
+ 311:Src/bootloader.c ****   cmd_frame[1] = WP_COMMAND;
+ 1082              		.loc 1 311 3 is_stmt 1 view .LVU281
+ 311:Src/bootloader.c ****   cmd_frame[1] = WP_COMMAND;
+ 1083              		.loc 1 311 16 is_stmt 0 view .LVU282
+ 1084 0012 6323     		movs	r3, #99
+ 1085 0014 8DF80D30 		strb	r3, [sp, #13]
+ 312:Src/bootloader.c ****   cmd_frame[2] = WP_COMMAND ^ 0xFFU;
+ 1086              		.loc 1 312 3 is_stmt 1 view .LVU283
+ 312:Src/bootloader.c ****   cmd_frame[2] = WP_COMMAND ^ 0xFFU;
+ 1087              		.loc 1 312 16 is_stmt 0 view .LVU284
+ 1088 0018 9C23     		movs	r3, #156
+ 1089 001a 8DF80E30 		strb	r3, [sp, #14]
+ 313:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 1090              		.loc 1 313 3 is_stmt 1 view .LVU285
+ 1091 001e 1B4D     		ldr	r5, .L51
+ 1092 0020 4FF47A73 		mov	r3, #1000
+ 1093 0024 0322     		movs	r2, #3
+ 1094 0026 03A9     		add	r1, sp, #12
+ 1095              	.LVL82:
+ 313:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 1096              		.loc 1 313 3 is_stmt 0 view .LVU286
+ 1097 0028 2868     		ldr	r0, [r5]
+ 1098              	.LVL83:
+ 313:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 1099              		.loc 1 313 3 view .LVU287
+ 1100 002a FFF7FEFF 		bl	HAL_SPI_Transmit
+ 1101              	.LVL84:
+ 316:Src/bootloader.c ****   wait_for_ack();
+ 1102              		.loc 1 316 3 is_stmt 1 view .LVU288
+ 1103 002e FFF7FEFF 		bl	wait_for_ack
+ 1104              	.LVL85:
+ 321:Src/bootloader.c ****   data_frame[0] = n;
+ 1105              		.loc 1 321 3 view .LVU289
+ 321:Src/bootloader.c ****   data_frame[0] = n;
+ 1106              		.loc 1 321 17 is_stmt 0 view .LVU290
+ 1107 0032 8DF80870 		strb	r7, [sp, #8]
+ 322:Src/bootloader.c ****   data_frame[1] = n ^ 0xFFU;
+ 1108              		.loc 1 322 3 is_stmt 1 view .LVU291
+ 322:Src/bootloader.c ****   data_frame[1] = n ^ 0xFFU;
+ 1109              		.loc 1 322 17 is_stmt 0 view .LVU292
+ 1110 0036 6342     		rsbs	r3, r4, #0
+ 1111 0038 8DF80930 		strb	r3, [sp, #9]
+ 323:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, data_frame, 2U, 1000U);
+ARM GAS  /tmp/ccMvkkdN.s 			page 33
+
+
+ 1112              		.loc 1 323 3 is_stmt 1 view .LVU293
+ 1113 003c 4FF47A73 		mov	r3, #1000
+ 1114 0040 0222     		movs	r2, #2
+ 1115 0042 02A9     		add	r1, sp, #8
+ 1116 0044 2868     		ldr	r0, [r5]
+ 1117 0046 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 1118              	.LVL86:
+ 326:Src/bootloader.c ****   wait_for_ack();
+ 1119              		.loc 1 326 3 view .LVU294
+ 1120 004a FFF7FEFF 		bl	wait_for_ack
+ 1121              	.LVL87:
+ 329:Src/bootloader.c ****   checksum = xor_checksum(codes, nb);
+ 1122              		.loc 1 329 3 view .LVU295
+ 329:Src/bootloader.c ****   checksum = xor_checksum(codes, nb);
+ 1123              		.loc 1 329 14 is_stmt 0 view .LVU296
+ 1124 004e 2146     		mov	r1, r4
+ 1125 0050 3046     		mov	r0, r6
+ 1126 0052 FFF7FEFF 		bl	xor_checksum
+ 1127              	.LVL88:
+ 329:Src/bootloader.c ****   checksum = xor_checksum(codes, nb);
+ 1128              		.loc 1 329 12 view .LVU297
+ 1129 0056 8DF80700 		strb	r0, [sp, #7]
+ 332:Src/bootloader.c ****   memcpy(data_frame, codes, (uint32_t)nb);
+ 1130              		.loc 1 332 3 is_stmt 1 view .LVU298
+ 1131 005a 2246     		mov	r2, r4
+ 1132 005c 3146     		mov	r1, r6
+ 1133 005e 02A8     		add	r0, sp, #8
+ 1134 0060 FFF7FEFF 		bl	memcpy
+ 1135              	.LVL89:
+ 333:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, data_frame, (uint16_t)nb, 1000U);
+ 1136              		.loc 1 333 3 view .LVU299
+ 1137 0064 4FF47A73 		mov	r3, #1000
+ 1138 0068 2246     		mov	r2, r4
+ 1139 006a 02A9     		add	r1, sp, #8
+ 1140 006c 2868     		ldr	r0, [r5]
+ 1141 006e FFF7FEFF 		bl	HAL_SPI_Transmit
+ 1142              	.LVL90:
+ 334:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &checksum, 1U, 1000U);
+ 1143              		.loc 1 334 3 view .LVU300
+ 1144 0072 4FF47A73 		mov	r3, #1000
+ 1145 0076 0122     		movs	r2, #1
+ 1146 0078 0DF10701 		add	r1, sp, #7
+ 1147 007c 2868     		ldr	r0, [r5]
+ 1148 007e FFF7FEFF 		bl	HAL_SPI_Transmit
+ 1149              	.LVL91:
+ 337:Src/bootloader.c ****   wait_for_ack();
+ 1150              		.loc 1 337 3 view .LVU301
+ 1151 0082 FFF7FEFF 		bl	wait_for_ack
+ 1152              	.LVL92:
+ 338:Src/bootloader.c **** }
+ 1153              		.loc 1 338 1 is_stmt 0 view .LVU302
+ 1154 0086 05B0     		add	sp, sp, #20
+ 1155              	.LCFI30:
+ 1156              		.cfi_def_cfa_offset 20
+ 1157              		@ sp needed
+ 1158 0088 F0BD     		pop	{r4, r5, r6, r7, pc}
+ 1159              	.LVL93:
+ARM GAS  /tmp/ccMvkkdN.s 			page 34
+
+
+ 1160              	.L52:
+ 338:Src/bootloader.c **** }
+ 1161              		.loc 1 338 1 view .LVU303
+ 1162 008a 00BF     		.align	2
+ 1163              	.L51:
+ 1164 008c 00000000 		.word	.LANCHOR0
+ 1165              		.cfi_endproc
+ 1166              	.LFE138:
+ 1168              		.section	.text.BL_WriteUnprotect_Command,"ax",%progbits
+ 1169              		.align	1
+ 1170              		.global	BL_WriteUnprotect_Command
+ 1171              		.syntax unified
+ 1172              		.thumb
+ 1173              		.thumb_func
+ 1174              		.fpu fpv4-sp-d16
+ 1176              	BL_WriteUnprotect_Command:
+ 1177              	.LFB139:
+ 346:Src/bootloader.c **** {
+ 1178              		.loc 1 346 1 is_stmt 1 view -0
+ 1179              		.cfi_startproc
+ 1180              		@ args = 0, pretend = 0, frame = 8
+ 1181              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1182 0000 00B5     		push	{lr}
+ 1183              	.LCFI31:
+ 1184              		.cfi_def_cfa_offset 4
+ 1185              		.cfi_offset 14, -4
+ 1186 0002 83B0     		sub	sp, sp, #12
+ 1187              	.LCFI32:
+ 1188              		.cfi_def_cfa_offset 16
+ 347:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 1189              		.loc 1 347 3 view .LVU305
+ 350:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 1190              		.loc 1 350 3 view .LVU306
+ 350:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 1191              		.loc 1 350 16 is_stmt 0 view .LVU307
+ 1192 0004 5A23     		movs	r3, #90
+ 1193 0006 8DF80430 		strb	r3, [sp, #4]
+ 351:Src/bootloader.c ****   cmd_frame[1] = WU_COMMAND;
+ 1194              		.loc 1 351 3 is_stmt 1 view .LVU308
+ 351:Src/bootloader.c ****   cmd_frame[1] = WU_COMMAND;
+ 1195              		.loc 1 351 16 is_stmt 0 view .LVU309
+ 1196 000a 7323     		movs	r3, #115
+ 1197 000c 8DF80530 		strb	r3, [sp, #5]
+ 352:Src/bootloader.c ****   cmd_frame[2] = WU_COMMAND ^ 0xFFU;
+ 1198              		.loc 1 352 3 is_stmt 1 view .LVU310
+ 352:Src/bootloader.c ****   cmd_frame[2] = WU_COMMAND ^ 0xFFU;
+ 1199              		.loc 1 352 16 is_stmt 0 view .LVU311
+ 1200 0010 8C23     		movs	r3, #140
+ 1201 0012 8DF80630 		strb	r3, [sp, #6]
+ 353:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 1202              		.loc 1 353 3 is_stmt 1 view .LVU312
+ 1203 0016 4FF47A73 		mov	r3, #1000
+ 1204 001a 0322     		movs	r2, #3
+ 1205 001c 01A9     		add	r1, sp, #4
+ 1206 001e 0548     		ldr	r0, .L55
+ 1207 0020 0068     		ldr	r0, [r0]
+ 1208 0022 FFF7FEFF 		bl	HAL_SPI_Transmit
+ARM GAS  /tmp/ccMvkkdN.s 			page 35
+
+
+ 1209              	.LVL94:
+ 356:Src/bootloader.c ****   wait_for_ack();
+ 1210              		.loc 1 356 3 view .LVU313
+ 1211 0026 FFF7FEFF 		bl	wait_for_ack
+ 1212              	.LVL95:
+ 359:Src/bootloader.c ****   wait_for_ack();
+ 1213              		.loc 1 359 3 view .LVU314
+ 1214 002a FFF7FEFF 		bl	wait_for_ack
+ 1215              	.LVL96:
+ 360:Src/bootloader.c **** }
+ 1216              		.loc 1 360 1 is_stmt 0 view .LVU315
+ 1217 002e 03B0     		add	sp, sp, #12
+ 1218              	.LCFI33:
+ 1219              		.cfi_def_cfa_offset 4
+ 1220              		@ sp needed
+ 1221 0030 5DF804FB 		ldr	pc, [sp], #4
+ 1222              	.L56:
+ 1223              		.align	2
+ 1224              	.L55:
+ 1225 0034 00000000 		.word	.LANCHOR0
+ 1226              		.cfi_endproc
+ 1227              	.LFE139:
+ 1229              		.section	.text.BL_ReadoutProtect_Command,"ax",%progbits
+ 1230              		.align	1
+ 1231              		.global	BL_ReadoutProtect_Command
+ 1232              		.syntax unified
+ 1233              		.thumb
+ 1234              		.thumb_func
+ 1235              		.fpu fpv4-sp-d16
+ 1237              	BL_ReadoutProtect_Command:
+ 1238              	.LFB140:
+ 371:Src/bootloader.c **** {
+ 1239              		.loc 1 371 1 is_stmt 1 view -0
+ 1240              		.cfi_startproc
+ 1241              		@ args = 0, pretend = 0, frame = 8
+ 1242              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1243 0000 10B5     		push	{r4, lr}
+ 1244              	.LCFI34:
+ 1245              		.cfi_def_cfa_offset 8
+ 1246              		.cfi_offset 4, -8
+ 1247              		.cfi_offset 14, -4
+ 1248 0002 82B0     		sub	sp, sp, #8
+ 1249              	.LCFI35:
+ 1250              		.cfi_def_cfa_offset 16
+ 372:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 1251              		.loc 1 372 3 view .LVU317
+ 373:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 1252              		.loc 1 373 3 view .LVU318
+ 373:Src/bootloader.c ****   uint8_t dummy = 0x00U;
+ 1253              		.loc 1 373 11 is_stmt 0 view .LVU319
+ 1254 0004 0023     		movs	r3, #0
+ 1255 0006 8DF80330 		strb	r3, [sp, #3]
+ 376:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, &dummy, 1U, 1000U);
+ 1256              		.loc 1 376 3 is_stmt 1 view .LVU320
+ 1257 000a 0F4C     		ldr	r4, .L59
+ 1258 000c 4FF47A73 		mov	r3, #1000
+ 1259 0010 0122     		movs	r2, #1
+ARM GAS  /tmp/ccMvkkdN.s 			page 36
+
+
+ 1260 0012 0DF10301 		add	r1, sp, #3
+ 1261 0016 2068     		ldr	r0, [r4]
+ 1262 0018 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 1263              	.LVL97:
+ 379:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 1264              		.loc 1 379 3 view .LVU321
+ 379:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 1265              		.loc 1 379 16 is_stmt 0 view .LVU322
+ 1266 001c 5A23     		movs	r3, #90
+ 1267 001e 8DF80430 		strb	r3, [sp, #4]
+ 380:Src/bootloader.c ****   cmd_frame[1] = RP_COMMAND;
+ 1268              		.loc 1 380 3 is_stmt 1 view .LVU323
+ 380:Src/bootloader.c ****   cmd_frame[1] = RP_COMMAND;
+ 1269              		.loc 1 380 16 is_stmt 0 view .LVU324
+ 1270 0022 8223     		movs	r3, #130
+ 1271 0024 8DF80530 		strb	r3, [sp, #5]
+ 381:Src/bootloader.c ****   cmd_frame[2] = RP_COMMAND ^ 0xFFU;
+ 1272              		.loc 1 381 3 is_stmt 1 view .LVU325
+ 381:Src/bootloader.c ****   cmd_frame[2] = RP_COMMAND ^ 0xFFU;
+ 1273              		.loc 1 381 16 is_stmt 0 view .LVU326
+ 1274 0028 7D23     		movs	r3, #125
+ 1275 002a 8DF80630 		strb	r3, [sp, #6]
+ 382:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 1276              		.loc 1 382 3 is_stmt 1 view .LVU327
+ 1277 002e 4FF47A73 		mov	r3, #1000
+ 1278 0032 0322     		movs	r2, #3
+ 1279 0034 01A9     		add	r1, sp, #4
+ 1280 0036 2068     		ldr	r0, [r4]
+ 1281 0038 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 1282              	.LVL98:
+ 385:Src/bootloader.c ****   wait_for_ack();
+ 1283              		.loc 1 385 3 view .LVU328
+ 1284 003c FFF7FEFF 		bl	wait_for_ack
+ 1285              	.LVL99:
+ 388:Src/bootloader.c ****   wait_for_ack();
+ 1286              		.loc 1 388 3 view .LVU329
+ 1287 0040 FFF7FEFF 		bl	wait_for_ack
+ 1288              	.LVL100:
+ 389:Src/bootloader.c **** }
+ 1289              		.loc 1 389 1 is_stmt 0 view .LVU330
+ 1290 0044 02B0     		add	sp, sp, #8
+ 1291              	.LCFI36:
+ 1292              		.cfi_def_cfa_offset 8
+ 1293              		@ sp needed
+ 1294 0046 10BD     		pop	{r4, pc}
+ 1295              	.L60:
+ 1296              		.align	2
+ 1297              	.L59:
+ 1298 0048 00000000 		.word	.LANCHOR0
+ 1299              		.cfi_endproc
+ 1300              	.LFE140:
+ 1302              		.section	.text.BL_ReadoutUnprotect_Command,"ax",%progbits
+ 1303              		.align	1
+ 1304              		.global	BL_ReadoutUnprotect_Command
+ 1305              		.syntax unified
+ 1306              		.thumb
+ 1307              		.thumb_func
+ARM GAS  /tmp/ccMvkkdN.s 			page 37
+
+
+ 1308              		.fpu fpv4-sp-d16
+ 1310              	BL_ReadoutUnprotect_Command:
+ 1311              	.LFB141:
+ 398:Src/bootloader.c **** {
+ 1312              		.loc 1 398 1 is_stmt 1 view -0
+ 1313              		.cfi_startproc
+ 1314              		@ args = 0, pretend = 0, frame = 8
+ 1315              		@ frame_needed = 0, uses_anonymous_args = 0
+ 1316 0000 00B5     		push	{lr}
+ 1317              	.LCFI37:
+ 1318              		.cfi_def_cfa_offset 4
+ 1319              		.cfi_offset 14, -4
+ 1320 0002 83B0     		sub	sp, sp, #12
+ 1321              	.LCFI38:
+ 1322              		.cfi_def_cfa_offset 16
+ 399:Src/bootloader.c ****   uint8_t cmd_frame[3];
+ 1323              		.loc 1 399 3 view .LVU332
+ 402:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 1324              		.loc 1 402 3 view .LVU333
+ 402:Src/bootloader.c ****   cmd_frame[0] = BL_SPI_SOF;
+ 1325              		.loc 1 402 16 is_stmt 0 view .LVU334
+ 1326 0004 5A23     		movs	r3, #90
+ 1327 0006 8DF80430 		strb	r3, [sp, #4]
+ 403:Src/bootloader.c ****   cmd_frame[1] = RU_COMMAND;
+ 1328              		.loc 1 403 3 is_stmt 1 view .LVU335
+ 403:Src/bootloader.c ****   cmd_frame[1] = RU_COMMAND;
+ 1329              		.loc 1 403 16 is_stmt 0 view .LVU336
+ 1330 000a 9223     		movs	r3, #146
+ 1331 000c 8DF80530 		strb	r3, [sp, #5]
+ 404:Src/bootloader.c ****   cmd_frame[2] = RU_COMMAND ^ 0xFFU;
+ 1332              		.loc 1 404 3 is_stmt 1 view .LVU337
+ 404:Src/bootloader.c ****   cmd_frame[2] = RU_COMMAND ^ 0xFFU;
+ 1333              		.loc 1 404 16 is_stmt 0 view .LVU338
+ 1334 0010 6D23     		movs	r3, #109
+ 1335 0012 8DF80630 		strb	r3, [sp, #6]
+ 405:Src/bootloader.c ****   HAL_SPI_Transmit(SpiHandle, cmd_frame, 3U, 1000U);
+ 1336              		.loc 1 405 3 is_stmt 1 view .LVU339
+ 1337 0016 4FF47A73 		mov	r3, #1000
+ 1338 001a 0322     		movs	r2, #3
+ 1339 001c 01A9     		add	r1, sp, #4
+ 1340 001e 0548     		ldr	r0, .L63
+ 1341 0020 0068     		ldr	r0, [r0]
+ 1342 0022 FFF7FEFF 		bl	HAL_SPI_Transmit
+ 1343              	.LVL101:
+ 408:Src/bootloader.c ****   wait_for_ack();
+ 1344              		.loc 1 408 3 view .LVU340
+ 1345 0026 FFF7FEFF 		bl	wait_for_ack
+ 1346              	.LVL102:
+ 411:Src/bootloader.c ****   wait_for_ack();
+ 1347              		.loc 1 411 3 view .LVU341
+ 1348 002a FFF7FEFF 		bl	wait_for_ack
+ 1349              	.LVL103:
+ 412:Src/bootloader.c **** }
+ 1350              		.loc 1 412 1 is_stmt 0 view .LVU342
+ 1351 002e 03B0     		add	sp, sp, #12
+ 1352              	.LCFI39:
+ 1353              		.cfi_def_cfa_offset 4
+ARM GAS  /tmp/ccMvkkdN.s 			page 38
+
+
+ 1354              		@ sp needed
+ 1355 0030 5DF804FB 		ldr	pc, [sp], #4
+ 1356              	.L64:
+ 1357              		.align	2
+ 1358              	.L63:
+ 1359 0034 00000000 		.word	.LANCHOR0
+ 1360              		.cfi_endproc
+ 1361              	.LFE141:
+ 1363              		.global	SpiHandle
+ 1364              		.section	.bss.SpiHandle,"aw",%nobits
+ 1365              		.align	2
+ 1366              		.set	.LANCHOR0,. + 0
+ 1369              	SpiHandle:
+ 1370 0000 00000000 		.space	4
+ 1371              		.text
+ 1372              	.Letext0:
+ 1373              		.file 2 "/usr/arm-none-eabi/include/machine/_default_types.h"
+ 1374              		.file 3 "/usr/arm-none-eabi/include/sys/_stdint.h"
+ 1375              		.file 4 "Drivers/CMSIS/Device/ST/STM32L4xx/Include/stm32l476xx.h"
+ 1376              		.file 5 "Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_def.h"
+ 1377              		.file 6 "Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_dma.h"
+ 1378              		.file 7 "Drivers/STM32L4xx_HAL_Driver/Inc/stm32l4xx_hal_spi.h"
+ 1379              		.file 8 "Inc/main.h"
+ 1380              		.file 9 "<built-in>"
+ARM GAS  /tmp/ccMvkkdN.s 			page 39
+
+
+DEFINED SYMBOLS
+                            *ABS*:0000000000000000 bootloader.c
+     /tmp/ccMvkkdN.s:18     .text.xor_checksum:0000000000000000 $t
+     /tmp/ccMvkkdN.s:25     .text.xor_checksum:0000000000000000 xor_checksum
+     /tmp/ccMvkkdN.s:76     .text.wait_for_ack:0000000000000000 $t
+     /tmp/ccMvkkdN.s:82     .text.wait_for_ack:0000000000000000 wait_for_ack
+     /tmp/ccMvkkdN.s:163    .text.wait_for_ack:0000000000000064 $d
+     /tmp/ccMvkkdN.s:168    .text.BL_Init:0000000000000000 $t
+     /tmp/ccMvkkdN.s:175    .text.BL_Init:0000000000000000 BL_Init
+     /tmp/ccMvkkdN.s:216    .text.BL_Init:0000000000000028 $d
+     /tmp/ccMvkkdN.s:221    .text.BL_Get_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:228    .text.BL_Get_Command:0000000000000000 BL_Get_Command
+     /tmp/ccMvkkdN.s:317    .text.BL_Get_Command:0000000000000078 $d
+     /tmp/ccMvkkdN.s:322    .text.BL_GetVersion_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:329    .text.BL_GetVersion_Command:0000000000000000 BL_GetVersion_Command
+     /tmp/ccMvkkdN.s:405    .text.BL_GetVersion_Command:0000000000000064 $d
+     /tmp/ccMvkkdN.s:410    .text.BL_GetID_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:417    .text.BL_GetID_Command:0000000000000000 BL_GetID_Command
+     /tmp/ccMvkkdN.s:508    .text.BL_GetID_Command:0000000000000078 $d
+     /tmp/ccMvkkdN.s:513    .text.BL_ReadMemory_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:520    .text.BL_ReadMemory_Command:0000000000000000 BL_ReadMemory_Command
+     /tmp/ccMvkkdN.s:659    .text.BL_ReadMemory_Command:00000000000000b0 $d
+     /tmp/ccMvkkdN.s:664    .text.BL_Go_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:671    .text.BL_Go_Command:0000000000000000 BL_Go_Command
+     /tmp/ccMvkkdN.s:763    .text.BL_Go_Command:000000000000006c $d
+     /tmp/ccMvkkdN.s:768    .text.BL_WriteMemory_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:775    .text.BL_WriteMemory_Command:0000000000000000 BL_WriteMemory_Command
+     /tmp/ccMvkkdN.s:909    .text.BL_WriteMemory_Command:00000000000000b4 $d
+     /tmp/ccMvkkdN.s:914    .text.BL_EraseMemory_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:921    .text.BL_EraseMemory_Command:0000000000000000 BL_EraseMemory_Command
+     /tmp/ccMvkkdN.s:1037   .text.BL_EraseMemory_Command:0000000000000084 $d
+     /tmp/ccMvkkdN.s:1042   .text.BL_WriteProtect_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:1049   .text.BL_WriteProtect_Command:0000000000000000 BL_WriteProtect_Command
+     /tmp/ccMvkkdN.s:1164   .text.BL_WriteProtect_Command:000000000000008c $d
+     /tmp/ccMvkkdN.s:1169   .text.BL_WriteUnprotect_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:1176   .text.BL_WriteUnprotect_Command:0000000000000000 BL_WriteUnprotect_Command
+     /tmp/ccMvkkdN.s:1225   .text.BL_WriteUnprotect_Command:0000000000000034 $d
+     /tmp/ccMvkkdN.s:1230   .text.BL_ReadoutProtect_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:1237   .text.BL_ReadoutProtect_Command:0000000000000000 BL_ReadoutProtect_Command
+     /tmp/ccMvkkdN.s:1298   .text.BL_ReadoutProtect_Command:0000000000000048 $d
+     /tmp/ccMvkkdN.s:1303   .text.BL_ReadoutUnprotect_Command:0000000000000000 $t
+     /tmp/ccMvkkdN.s:1310   .text.BL_ReadoutUnprotect_Command:0000000000000000 BL_ReadoutUnprotect_Command
+     /tmp/ccMvkkdN.s:1359   .text.BL_ReadoutUnprotect_Command:0000000000000034 $d
+     /tmp/ccMvkkdN.s:1369   .bss.SpiHandle:0000000000000000 SpiHandle
+     /tmp/ccMvkkdN.s:1365   .bss.SpiHandle:0000000000000000 $d
+
+UNDEFINED SYMBOLS
+HAL_SPI_Transmit
+HAL_SPI_TransmitReceive
+Error_Handler
+HAL_SPI_Receive
+memcpy
