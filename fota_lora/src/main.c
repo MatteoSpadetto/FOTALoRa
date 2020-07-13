@@ -455,7 +455,7 @@ int main(void)
           // If is the last message to send then STOP
           if (counter_byte_tx * BUFFER_SIZE > (sizeof(arr_dd) / sizeof(arr_dd[0])))
           {
-            Buffer[0] = 0xFF;      // End of update
+            Buffer[0] = 0xFA;      // End of update
             Radio.Send(Buffer, 1); // Send end of update
             return 0;
           }
@@ -479,7 +479,7 @@ int main(void)
               }
             }
           }
-          else if (Buffer[0] = 0xFF) // End of update
+          else if (Buffer[0] = 0xFA) // End of update
           {
             test_jump(); // Jump to the application address
           }
