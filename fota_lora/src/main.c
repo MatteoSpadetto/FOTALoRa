@@ -387,7 +387,8 @@ int main(void)
   uint16_t dd_index = 0;        // DATA index
   uint16_t aaaa_index = 0;      // ADDRESS index
   uint8_t update_flag = 0;      // 0 = NO UPDATE | 1 = UPDATE RUNNING
-  uint8_t retry_flag = 0;
+  uint8_t retry_flag = 0;	// Try to go in upadate mode for n times
+  uint8_t send_aa_flag = 0;
 
   while (1)
   {
@@ -404,62 +405,66 @@ int main(void)
         if (BufferSize > 0)
         {
           // Give update configuration to the slave
-          Buffer[0] = 0xAA;      // Update request
-          Radio.Send(Buffer, 1); // Send update request
+	  if (send_aa_flag <= 25){
+            Buffer[0] = 0xAA;      // Update request
+            Radio.Send(Buffer, 1); // Send update request
+	    send_aa_flag++;
+	  }
+	  else {
+            TimerStop(&timerLed);
+            LED_Off(LED_BLUE);
+            LED_Off(LED_GREEN);
+            LED_Off(LED_RED1);
+            LED_Toggle(LED_RED2);
 
-          TimerStop(&timerLed);
-          LED_Off(LED_BLUE);
-          LED_Off(LED_GREEN);
-          LED_Off(LED_RED1);
-          LED_Toggle(LED_RED2);
-
-          Buffer[0] = KEY;                       // KEY value
-          Buffer[1] = arr_aaaa[aaaa_index] >> 8; // ADDRESS MSByte
-          Buffer[2] = arr_aaaa[aaaa_index];      // ADDRESS LSByte
-          aaaa_index++;                          // Preparing for next address
-          sprintf(txt, "DATA_AAAA: %02x%02x\r\n", Buffer[0], Buffer[1]);
-          HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 1000);
-
-          uint8_t index = 3;
-          uint16_t tmp_index = dd_index;
-          // Preparing the buffer DATA to send with two DATA for each LoRa message
-          for (size_t k = tmp_index; k < tmp_index + 2; k++)
-          {
-            uint16_t to_parse = arr_dd[k]; // Using the data to store
-            for (size_t i = 0; i < 4; i++)
-            {
-              Buffer[index] = (to_parse >> ((3 - i) * 8)) & 0xFF; // Storing in buffer to send all bytes
-              index++;
-            }
-            dd_index++;
-          }
-          DelayMs(25);
-          // Debug BUFFER to send
-          for (size_t i = 0; i < sizeof(Buffer); i++)
-          {
-            sprintf(txt, "DATA[%d]: %02x\r\n", i, Buffer[i]);
+            Buffer[0] = KEY;                       // KEY value
+            Buffer[1] = arr_aaaa[aaaa_index] >> 8; // ADDRESS MSByte
+            Buffer[2] = arr_aaaa[aaaa_index];      // ADDRESS LSByte
+            aaaa_index++;                          // Preparing for next address
+            sprintf(txt, "DATA_AAAA: %02x%02x\r\n", Buffer[0], Buffer[1]);
             HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 1000);
+
+            uint8_t index = 3;
+            uint16_t tmp_index = dd_index;
+            // Preparing the buffer DATA to send with two DATA for each LoRa message
+            for (size_t k = tmp_index; k < tmp_index + 2; k++)
+            {
+              uint16_t to_parse = arr_dd[k]; // Using the data to store
+              for (size_t i = 0; i < 4; i++)
+              {
+                Buffer[index] = (to_parse >> ((3 - i) * 8)) & 0xFF; // Storing in buffer to send all bytes
+                index++;
+              }
+              dd_index++;
+            }
+            DelayMs(25);
+            // Debug BUFFER to send
+            for (size_t i = 0; i < sizeof(Buffer); i++)
+            {
+              sprintf(txt, "DATA[%d]: %02x\r\n", i, Buffer[i]);
+              HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 1000);
+            }
+            // Debug BUFFER SIZE
+            sprintf(txt, "SIZE[%d]\r\n", sizeof(Buffer));
+            HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 1000);
+            // Debug the END OF BUFFER PREPARATION
+            HAL_UART_Transmit(&huart2, (uint8_t *)"DONE\r\n", strlen("DONE\r\n"), 1000);
+            // Sending via LoRa
+            Radio.Send(Buffer, BufferSize);
+            // Incrementing the number of messages sent
+            counter_byte_tx++;
+            // Debug NUMBER OF BYTES SENT and BUFFER
+            sprintf(txt, "ByteSENT: %d -- %02x\r\n", counter_byte_tx * BUFFER_SIZE, Buffer);
+            HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 200);
+            // If is the last message to send then STOP
+            if (counter_byte_tx * BUFFER_SIZE > (sizeof(arr_dd) / sizeof(arr_dd[0])))
+            {
+              Buffer[0] = 0xFA;      // End of update
+              Radio.Send(Buffer, 1); // Send end of update
+              return 0; // Stop to send because the firmware ended
+            }
           }
-          // Debug BUFFER SIZE
-          sprintf(txt, "SIZE[%d]\r\n", sizeof(Buffer));
-          HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 1000);
-          // Debug the END OF BUFFER PREPARATION
-          HAL_UART_Transmit(&huart2, (uint8_t *)"DONE\r\n", strlen("DONE\r\n"), 1000);
-          // Sending via LoRa
-          Radio.Send(Buffer, BufferSize);
-          // Incrementing the number of messages sent
-          counter_byte_tx++;
-          // Debug NUMBER OF BYTES SENT and BUFFER
-          sprintf(txt, "ByteSENT: %d -- %02x\r\n", counter_byte_tx * BUFFER_SIZE, Buffer);
-          HAL_UART_Transmit(&huart2, (uint8_t *)txt, strlen(txt), 200);
-          // If is the last message to send then STOP
-          if (counter_byte_tx * BUFFER_SIZE > (sizeof(arr_dd) / sizeof(arr_dd[0])))
-          {
-            Buffer[0] = 0xFA;      // End of update
-            Radio.Send(Buffer, 1); // Send end of update
-            return 0;
-          }
-        }
+	}
       }
       else // Receiver CODE
       {
